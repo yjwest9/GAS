@@ -1,0 +1,441 @@
+<script>
+  /* ===================================================================
+   * StockBattle 클라이언트 게임 엔진 (싱글 모드)
+   *  - 시작 시 GAS로 실제 시세 1회(getSeedPrice) → 이후 랜덤워크 시뮬
+   *  - 매수=풀매수 / 매도=전량매도, 레버리지는 올리기만 가능, 청산 구현
+   *  - AI 봇 2명과 순위 경쟁 (플레이 중엔 순위만, 끝나면 수익률 공개)
+   * =================================================================== */
+
+  const START_MONEY = 1000000;
+  const TICK_MS = 1500; // 가격 갱신 주기(시뮬이라 빠르게)
+  const VOL = 0.012; // 틱당 변동성(약 1.2%)
+
+  // 종목 카탈로그
+  const SYMBOLS = {
+    kr: [
+      ["000660.KS", "SK하이닉스"],
+      ["005930.KS", "삼성전자"],
+      ["035720.KS", "카카오"],
+    ],
+    us: [
+      ["AAPL", "애플"],
+      ["TSLA", "테슬라"],
+      ["NVDA", "엔비디아"],
+    ],
+    coin: [
+      ["bitcoin", "비트코인"],
+      ["ethereum", "이더리움"],
+      ["solana", "솔라나"],
+    ],
+  };
+
+  let S = {}; // 게임 상태
+  let chart = null;
+
+  // ---------- 설정 화면 ----------
+  const setup = {
+    category: "kr",
+    symbol: "000660.KS",
+    symbolLabel: "SK하이닉스",
+    leverage: 1,
+    durationMin: 5,
+  };
+
+  function renderSymbols() {
+    const box = document.getElementById("symbol-list");
+    box.innerHTML = "";
+    SYMBOLS[setup.category].forEach(([id, label], i) => {
+      const b = document.createElement("button");
+      b.className = "chip" + (i === 0 ? " active" : "");
+      b.textContent = label;
+      b.onclick = () => {
+        box
+          .querySelectorAll(".chip")
+          .forEach((c) => c.classList.remove("active"));
+        b.classList.add("active");
+        setup.symbol = id;
+        setup.symbolLabel = label;
+      };
+      box.appendChild(b);
+    });
+    setup.symbol = SYMBOLS[setup.category][0][0];
+    setup.symbolLabel = SYMBOLS[setup.category][0][1];
+  }
+
+  function bindSeg(id, attr, key, after) {
+    document.getElementById(id).addEventListener("click", (e) => {
+      const btn = e.target.closest(".seg-btn");
+      if (!btn) return;
+      e.currentTarget
+        .querySelectorAll(".seg-btn")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      setup[key] = isNaN(+btn.dataset[attr])
+        ? btn.dataset[attr]
+        : +btn.dataset[attr];
+      if (after) after();
+    });
+  }
+  bindSeg("seg-category", "cat", "category", renderSymbols);
+  bindSeg("seg-leverage", "lev", "leverage");
+  bindSeg("seg-duration", "min", "durationMin");
+  renderSymbols();
+
+  document.getElementById("btn-start").onclick = () => {
+    const nick = document.getElementById("in-nickname").value.trim() || "나";
+    const email = document.getElementById("in-email").value.trim();
+    // 시드 시세 호출 (GAS 환경이면 서버, 아니면 폴백)
+    if (window.google && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler((seed) => startGame(nick, email, seed))
+        .withFailureHandler(() =>
+          startGame(nick, email, {
+            price: fallbackLocal(),
+            source: "fallback",
+          }),
+        )
+        .getSeedPrice(setup.category, setup.symbol);
+    } else {
+      startGame(nick, email, { price: fallbackLocal(), source: "sim" });
+    }
+  };
+  function fallbackLocal() {
+    const m = {
+      "000660.KS": 235000,
+      "005930.KS": 78000,
+      "035720.KS": 42000,
+      AAPL: 230,
+      TSLA: 350,
+      NVDA: 140,
+      bitcoin: 95000000,
+      ethereum: 4800000,
+      solana: 320000,
+    };
+    return m[setup.symbol] || 100000;
+  }
+
+  // ---------- 게임 시작 ----------
+  function startGame(nick, email, seed) {
+    const p0 = seed.price;
+    S = {
+      nick,
+      email,
+      ...setup,
+      durationSec: setup.durationMin * 60,
+      elapsed: 0,
+      startPrice: p0,
+      price: p0,
+      prevPrice: p0,
+      me: newTrader(),
+      bots: [newTrader("주식고수"), newTrader("초보개미")],
+      priceHist: [p0],
+      labels: [0],
+    };
+    S.me.leverage = setup.leverage;
+
+    document.getElementById("g-symbol").textContent = setup.symbolLabel;
+    document.getElementById("g-source").textContent = seed.source;
+    show("game");
+    initChart();
+    updateUI();
+
+    S.timer = setInterval(onSecond, 1000);
+    S.priceTimer = setInterval(onTick, TICK_MS);
+  }
+
+  function newTrader(name) {
+    return {
+      name: name || "나",
+      cash: START_MONEY,
+      inPosition: false,
+      entryPrice: 0,
+      entryCapital: 0,
+      leverage: 1,
+      liquidated: false,
+    };
+  }
+
+  // 현재 자산
+  function equity(t, price) {
+    if (t.liquidated) return 0;
+    if (!t.inPosition) return t.cash;
+    const e = t.entryCapital * (1 + t.leverage * (price / t.entryPrice - 1));
+    return Math.max(0, e);
+  }
+  function ret(t, price) {
+    return (equity(t, price) / START_MONEY - 1) * 100;
+  }
+
+  // ---------- 1초 타이머 ----------
+  function onSecond() {
+    S.elapsed++;
+    const left = S.durationSec - S.elapsed;
+    const el = document.getElementById("g-timer");
+    el.textContent = fmtTime(left);
+    el.classList.toggle("urgent", left <= 10);
+    if (left <= 0) endGame();
+  }
+
+  // ---------- 가격 틱(랜덤워크) ----------
+  function onTick() {
+    S.prevPrice = S.price;
+    S.price = Math.max(1, S.price * (1 + gauss() * VOL));
+    // 청산 체크
+    [S.me, ...S.bots].forEach((t) => {
+      if (t.inPosition && equity(t, S.price) <= 0 && !t.liquidated) {
+        t.liquidated = true;
+        t.inPosition = false;
+      }
+    });
+    botThink();
+    S.priceHist.push(S.price);
+    S.labels.push(S.elapsed);
+    if (S.priceHist.length > 120) {
+      S.priceHist.shift();
+      S.labels.shift();
+    }
+    updateChart();
+    updateUI();
+  }
+
+  // 가우시안 난수(Box-Muller)
+  function gauss() {
+    let u = 0,
+      v = 0;
+    while (!u) u = Math.random();
+    while (!v) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  // ---------- AI 봇 행동 ----------
+  function botThink() {
+    S.bots.forEach((b) => {
+      if (b.liquidated) return;
+      if (!b.inPosition) {
+        if (Math.random() < 0.25) {
+          enter(b);
+          if (Math.random() < 0.3) bumpLev(b);
+        }
+      } else {
+        if (Math.random() < 0.2) exit(b);
+        else if (Math.random() < 0.1) bumpLev(b);
+      }
+    });
+  }
+  function bumpLev(t) {
+    const steps = [1, 2, 5, 10];
+    const i = steps.indexOf(t.leverage);
+    if (i < steps.length - 1) {
+      // 레버리지 변경 = 현재가로 재진입(현 자산 기준)
+      if (t.inPosition) {
+        const e = equity(t, S.price);
+        t.entryCapital = e;
+        t.entryPrice = S.price;
+      }
+      t.leverage = steps[i + 1];
+    }
+  }
+
+  // ---------- 매매 ----------
+  function enter(t) {
+    t.inPosition = true;
+    t.entryPrice = S.price;
+    t.entryCapital = t.cash;
+  }
+  function exit(t) {
+    t.cash = equity(t, S.price);
+    t.inPosition = false;
+    t.entryCapital = 0;
+  }
+
+  document.getElementById("btn-buy").onclick = () => {
+    if (S.me.liquidated || S.me.inPosition) return;
+    enter(S.me);
+    syncButtons();
+    updateUI();
+  };
+  document.getElementById("btn-sell").onclick = () => {
+    if (!S.me.inPosition) return;
+    exit(S.me);
+    syncButtons();
+    updateUI();
+  };
+  document.getElementById("btn-levup").onclick = () => {
+    if (S.me.liquidated) return;
+    bumpLev(S.me);
+    updateUI();
+  };
+
+  function syncButtons() {
+    document.getElementById("btn-buy").disabled =
+      S.me.inPosition || S.me.liquidated;
+    document.getElementById("btn-sell").disabled = !S.me.inPosition;
+    document.getElementById("btn-levup").disabled =
+      S.me.leverage >= 10 || S.me.liquidated;
+  }
+
+  // ---------- UI ----------
+  function updateUI() {
+    const price = S.price;
+    const chg = (price / S.startPrice - 1) * 100;
+    const upcls = price >= S.prevPrice ? "up" : "down";
+
+    const pe = document.getElementById("g-price");
+    pe.textContent = fmtNum(price);
+    pe.className = "price-now " + upcls;
+    const ce = document.getElementById("g-change");
+    ce.textContent = (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%";
+    ce.className = "price-change " + (chg >= 0 ? "up" : "down");
+    document.getElementById("g-lev").textContent = S.me.leverage + "배";
+
+    const r = ret(S.me, price);
+    const re = document.getElementById("g-return");
+    re.textContent = (r >= 0 ? "+" : "") + r.toFixed(2) + "%";
+    re.className = "stat-return " + (r >= 0 ? "up" : "down");
+    document.getElementById("g-equity").textContent =
+      fmtNum(equity(S.me, price)) + "원";
+    document.getElementById("g-position").textContent = S.me.liquidated
+      ? "청산됨 💀"
+      : S.me.inPosition
+        ? "매수 포지션 보유 중"
+        : "현금 보유 중";
+
+    renderRank(false);
+    syncButtons();
+  }
+
+  function renderRank(reveal) {
+    const players = [
+      { ...S.me, name: S.nick, me: true },
+      ...S.bots.map((b) => ({ ...b, me: false })),
+    ];
+    players.sort((a, b) => equity(b, S.price) - equity(a, S.price));
+    const ul = document.getElementById(reveal ? "r-rank-list" : "g-rank");
+    ul.innerHTML = "";
+    players.forEach((p, i) => {
+      const r = ret(p, S.price);
+      const li = document.createElement("li");
+      li.className = "rank-row" + (p.me ? " me" : "");
+      li.innerHTML = `<span class="rank-no">${i + 1}</span>
+      <span class="rank-name">${p.name}${p.liquidated ? " 💀" : ""}</span>
+      <span class="rank-val ${r >= 0 ? "up" : "down"}" ${reveal ? "" : 'style="display:none"'}>${(r >= 0 ? "+" : "") + r.toFixed(2)}%</span>`;
+      ul.appendChild(li);
+    });
+    return players;
+  }
+
+  // ---------- 차트 ----------
+  function initChart() {
+    const ctx = document.getElementById("g-chart");
+    chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: S.labels,
+        datasets: [
+          {
+            data: S.priceHist,
+            borderColor: "#3182f6",
+            borderWidth: 2,
+            fill: true,
+            backgroundColor: "rgba(49,130,246,.08)",
+            tension: 0.3,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: { display: false },
+          y: {
+            display: true,
+            ticks: { color: "#8b95a1", font: { size: 10 } },
+            grid: { color: "#f2f4f6" },
+          },
+        },
+      },
+    });
+  }
+  function updateChart() {
+    if (!chart) return;
+    const up = S.price >= S.startPrice;
+    chart.data.datasets[0].borderColor = up ? "#f04452" : "#3182f6";
+    chart.data.datasets[0].backgroundColor = up
+      ? "rgba(240,68,82,.08)"
+      : "rgba(49,130,246,.08)";
+    chart.data.labels = S.labels;
+    chart.data.datasets[0].data = S.priceHist;
+    chart.update("none");
+  }
+
+  // ---------- 종료 ----------
+  function endGame() {
+    clearInterval(S.timer);
+    clearInterval(S.priceTimer);
+    if (S.me.inPosition) exit(S.me); // 강제 청산매도
+    const players = renderRank(true);
+    const myRank = players.findIndex((p) => p.me) + 1;
+    const myRet = ret(S.me, S.price);
+
+    document.getElementById("r-rank").textContent = myRank + "위";
+    const rr = document.getElementById("r-return");
+    rr.textContent = (myRet >= 0 ? "+" : "") + myRet.toFixed(2) + "%";
+    rr.className = "result-return " + (myRet >= 0 ? "up" : "down");
+    document.getElementById("r-equity").textContent =
+      fmtNum(equity(S.me, S.price)) + "원";
+
+    const note = document.getElementById("r-email-note");
+    // 결과 저장 → 트리거가 이메일/Slack 발송
+    const payload = {
+      nickname: S.nick,
+      email: S.email,
+      mode: "single",
+      symbolLabel: S.symbolLabel,
+      leverage: S.me.leverage,
+      durationMin: S.durationMin,
+      finalReturn: myRet,
+      rank: myRank,
+      totalPlayers: players.length,
+    };
+    if (window.google && google.script && google.script.run) {
+      google.script.run.withSuccessHandler(() => {}).saveResult(payload);
+      note.textContent = S.email
+        ? "결과 이메일이 잠시 후 발송됩니다 📧"
+        : "결과가 저장되었습니다 (이메일 미입력)";
+    } else {
+      note.textContent = "(미리보기 모드: 저장은 배포 후 동작)";
+    }
+    show("result");
+  }
+
+  document.getElementById("btn-again").onclick = () => {
+    if (chart) {
+      chart.destroy();
+      chart = null;
+    }
+    show("setup");
+  };
+
+  // ---------- 유틸 ----------
+  function show(name) {
+    document
+      .querySelectorAll(".screen")
+      .forEach((s) => s.classList.remove("active"));
+    document.getElementById("screen-" + name).classList.add("active");
+    window.scrollTo(0, 0);
+  }
+  function fmtTime(s) {
+    s = Math.max(0, s);
+    return (
+      String(Math.floor(s / 60)).padStart(2, "0") +
+      ":" +
+      String(s % 60).padStart(2, "0")
+    );
+  }
+  function fmtNum(n) {
+    return Math.round(n).toLocaleString("ko-KR");
+  }
+</script>

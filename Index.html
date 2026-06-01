@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <?!= include('Stylesheet'); ?>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <!-- ===================== 설정 화면 ===================== -->
+      <section id="screen-setup" class="screen active">
+        <header class="brand">
+          <div class="brand-mark">SB</div>
+          <div>
+            <h1 class="brand-name">StockBattle</h1>
+            <p class="brand-sub">가상 머니로 5분 승부</p>
+          </div>
+        </header>
+
+        <div class="card">
+          <label class="field-label">닉네임</label>
+          <input
+            id="in-nickname"
+            class="text-input"
+            type="text"
+            maxlength="10"
+            placeholder="닉네임 입력"
+          />
+
+          <label class="field-label"
+            >이메일 <span class="muted">(결과 받기 · 선택)</span></label
+          >
+          <input
+            id="in-email"
+            class="text-input"
+            type="email"
+            placeholder="example@email.com"
+          />
+        </div>
+
+        <div class="card">
+          <label class="field-label">종목</label>
+          <div class="seg" id="seg-category">
+            <button class="seg-btn active" data-cat="kr">국내주</button>
+            <button class="seg-btn" data-cat="us">해외주</button>
+            <button class="seg-btn" data-cat="coin">코인</button>
+          </div>
+          <div class="chip-row" id="symbol-list"></div>
+        </div>
+
+        <div class="card">
+          <label class="field-label"
+            >레버리지
+            <span class="muted"
+              >(게임 중 올릴 순 있어도 내릴 순 없음)</span
+            ></label
+          >
+          <div class="seg" id="seg-leverage">
+            <button class="seg-btn active" data-lev="1">1배</button>
+            <button class="seg-btn" data-lev="2">2배</button>
+            <button class="seg-btn" data-lev="5">5배</button>
+            <button class="seg-btn" data-lev="10">10배</button>
+          </div>
+
+          <label class="field-label" style="margin-top: 18px">게임 시간</label>
+          <div class="seg" id="seg-duration">
+            <button class="seg-btn active" data-min="5">5분</button>
+            <button class="seg-btn" data-min="10">10분</button>
+            <button class="seg-btn" data-min="30">30분</button>
+          </div>
+        </div>
+
+        <div class="disclaimer">
+          이 게임은 가상 머니를 사용하며 실제 투자와 무관합니다. 교육 및 오락
+          목적으로만 사용하세요.
+        </div>
+
+        <button id="btn-start" class="btn-primary btn-block">게임 시작</button>
+      </section>
+
+      <!-- ===================== 게임 화면 (P4) ===================== -->
+      <section id="screen-game" class="screen">
+        <header class="game-top">
+          <div class="ticker">
+            <span class="ticker-label" id="g-symbol">SK하이닉스</span>
+            <span class="badge" id="g-source">live</span>
+          </div>
+          <div class="timer" id="g-timer">05:00</div>
+        </header>
+
+        <div class="grid">
+          <!-- 가격 + 차트 -->
+          <div class="card col-main">
+            <div class="price-row">
+              <div>
+                <div class="price-now" id="g-price">0</div>
+                <div class="price-change" id="g-change">0.00%</div>
+              </div>
+              <div class="lev-tag" id="g-lev">1배</div>
+            </div>
+            <div class="chart-wrap"><canvas id="g-chart"></canvas></div>
+          </div>
+
+          <!-- 내 자산 -->
+          <div class="card col-side">
+            <div class="stat-label">내 수익률</div>
+            <div class="stat-return" id="g-return">+0.00%</div>
+            <div class="stat-sub" id="g-equity">1,000,000원</div>
+            <div class="pos-state" id="g-position">현금 보유 중</div>
+          </div>
+
+          <!-- 랭킹 (순위만 공개) -->
+          <div class="card col-rank">
+            <div class="stat-label">
+              실시간 순위 <span class="muted">· 수익률은 끝나면 공개</span>
+            </div>
+            <ul class="rank-list" id="g-rank"></ul>
+          </div>
+        </div>
+
+        <!-- 하단 고정 액션 -->
+        <div class="action-bar">
+          <button id="btn-levup" class="btn-ghost">레버리지 ↑</button>
+          <button id="btn-buy" class="btn-buy">매수</button>
+          <button id="btn-sell" class="btn-sell" disabled>매도</button>
+        </div>
+      </section>
+
+      <!-- ===================== 결과 화면 (P5) ===================== -->
+      <section id="screen-result" class="screen">
+        <div class="result-hero">
+          <div class="result-rank" id="r-rank">1위</div>
+          <div class="result-return" id="r-return">+0.00%</div>
+          <div class="result-sub" id="r-equity">1,000,000원</div>
+        </div>
+
+        <div class="card">
+          <div class="stat-label">최종 순위</div>
+          <ul class="rank-list reveal" id="r-rank-list"></ul>
+        </div>
+
+        <p class="email-note" id="r-email-note"></p>
+
+        <button id="btn-again" class="btn-primary btn-block">다시 하기</button>
+      </section>
+    </div>
+
+    <?!= include('JavaScript'); ?>
+  </body>
+</html>
