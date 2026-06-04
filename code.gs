@@ -23,6 +23,7 @@ const SPREADSHEET_ID = "1V_YTLSziDDVP5DQURLX2Y_AEpqYOotVBqzznu81B3YM";
 const SLACK_WEBHOOK_URL = ""; // 예: https://hooks.slack.com/services/...  (비우면 Slack 생략)
 const RESULT_SHEET = "Results";
 const START_MONEY = 1000000; // 시작 가상 머니 (UI 표시용 동기화)
+const MAX_PLAYERS = 8; // 방 정원 (서버 안정성: Sheets 폴링 부하 고려)
 
 // ===== Gemini (AI) =====
 // 키는 코드에 넣지 않고 스크립트 속성(GEMINI_API_KEY)에서 읽음.
@@ -156,6 +157,7 @@ function getHistory(nickname) {
           Session.getScriptTimeZone(),
           "MM.dd HH:mm",
         ),
+        mode: o.mode,
         symbol: o.symbolLabel,
         leverage: o.leverage,
         finalReturn: o.finalReturn,
@@ -196,6 +198,7 @@ function getGameDetail(id) {
           Session.getScriptTimeZone(),
           "MM.dd HH:mm",
         ),
+        mode: o.mode,
         symbol: o.symbolLabel,
         leverage: o.leverage,
         durationMin: o.durationMin,
@@ -500,11 +503,17 @@ function joinRoom(roomId, nick) {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var room = findRoom_(ss, roomId);
   if (!room) return { error: "NOT_FOUND" };
+  if (room.status !== "waiting") return { error: "ALREADY_STARTED" };
   var players = ss.getSheetByName("Players");
   var vals = players.getDataRange().getValues();
+  var count = 0;
   for (var r = 1; r < vals.length; r++) {
-    if (vals[r][0] === roomId && vals[r][1] === nick) return roomBasic_(room); // 이미 있음
+    if (String(vals[r][0]) === String(roomId)) {
+      count++;
+      if (String(vals[r][1]) === String(nick)) return { error: "NICK_TAKEN" }; // 같은 방 닉 중복 금지
+    }
   }
+  if (count >= MAX_PLAYERS) return { error: "ROOM_FULL" };
   players.appendRow([roomId, nick, 0, false, new Date()]);
   return roomBasic_(room);
 }
@@ -524,6 +533,7 @@ function getLobby(roomId) {
     seed: Number(room.seed),
     news: room.news ? JSON.parse(room.news) : {},
     inviteUrl: inviteUrl_(roomId),
+    serverNow: Date.now(),
     players: getRoomPlayers(roomId),
   };
 }
@@ -538,8 +548,8 @@ function startRoom(roomId) {
     tc = h.indexOf("startTime"),
     ic = h.indexOf("roomId");
   for (var r = 1; r < vals.length; r++) {
-    if (vals[r][ic] === roomId) {
-      var st = new Date(Date.now() + 4000);
+    if (String(vals[r][ic]) === String(roomId)) {
+      var st = new Date(Date.now() + 6000);
       rooms.getRange(r + 1, sc + 1).setValue("playing");
       rooms.getRange(r + 1, tc + 1).setValue(st);
       return { startTime: st.getTime() };
@@ -554,7 +564,10 @@ function updatePlayer(roomId, nick, ret, finished) {
   var players = ss.getSheetByName("Players");
   var vals = players.getDataRange().getValues();
   for (var r = 1; r < vals.length; r++) {
-    if (vals[r][0] === roomId && vals[r][1] === nick) {
+    if (
+      String(vals[r][0]) === String(roomId) &&
+      String(vals[r][1]) === String(nick)
+    ) {
       players.getRange(r + 1, 3, 1, 3).setValues([[ret, finished, new Date()]]);
       break;
     }
@@ -566,15 +579,23 @@ function getRoomPlayers(roomId) {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var players = ss.getSheetByName("Players");
   var vals = players.getDataRange().getValues();
-  var out = [];
+  var map = {}; // nick -> {nick, ret, finished, t}  (혹시 모를 중복 행은 최신 것만)
   for (var r = 1; r < vals.length; r++) {
-    if (vals[r][0] === roomId)
-      out.push({
-        nick: vals[r][1],
+    if (String(vals[r][0]) !== String(roomId)) continue;
+    var nick = String(vals[r][1]);
+    var t = vals[r][4] ? new Date(vals[r][4]).getTime() : 0;
+    if (!map[nick] || t >= map[nick].t) {
+      map[nick] = {
+        nick: nick,
         ret: Number(vals[r][2]),
         finished: vals[r][3] === true || vals[r][3] === "true",
-      });
+        t: t,
+      };
+    }
   }
+  var out = Object.keys(map).map(function (k) {
+    return { nick: map[k].nick, ret: map[k].ret, finished: map[k].finished };
+  });
   out.sort(function (a, b) {
     return b.ret - a.ret;
   });
@@ -587,7 +608,7 @@ function findRoom_(ss, roomId) {
   var h = vals[0];
   var ic = h.indexOf("roomId");
   for (var r = 1; r < vals.length; r++) {
-    if (vals[r][ic] === roomId) return rowToObj_(h, vals[r]);
+    if (String(vals[r][ic]) === String(roomId)) return rowToObj_(h, vals[r]);
   }
   return null;
 }

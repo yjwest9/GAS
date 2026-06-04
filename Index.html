@@ -52,6 +52,7 @@
         <button id="home-history" class="btn-text">
           📋 최근 게임 기록 보기
         </button>
+        <button id="home-join" class="btn-text">🔑 코드로 입장</button>
 
         <div class="disclaimer">
           이 게임은 가상 머니를 사용하며 실제 투자와 무관합니다. 교육 및 오락
@@ -202,7 +203,19 @@
 
         <div class="card">
           <label class="field-label">방 코드</label>
-          <div class="room-code" id="j-code">-----</div>
+          <input
+            class="room-code code-input"
+            id="j-code"
+            type="text"
+            maxlength="5"
+            placeholder="코드 5자리"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+          />
+          <p class="muted" style="font-size: 12px; margin-top: 8px">
+            초대 링크로 들어오면 자동으로 채워져요
+          </p>
           <label class="field-label" style="margin-top: 16px"
             >닉네임 <span class="muted">(필수)</span></label
           >
@@ -228,10 +241,11 @@
           <button
             id="l-copy"
             class="btn-copy"
-            style="max-width: 260px; margin: 14px auto 0"
+            style="max-width: 280px; margin: 14px auto 0"
           >
-            🔗 초대 링크 복사
+            🔗 친구 초대하기
           </button>
+          <div class="invite-link" id="l-link"></div>
         </div>
 
         <div class="card">
@@ -262,7 +276,12 @@
             <span class="ticker-label">StockBattle</span
             ><span class="badge" id="g-source">live</span>
           </div>
-          <div class="timer" id="g-timer">03:00</div>
+          <div style="display: flex; align-items: center; gap: 10px">
+            <button id="g-mute" class="mute-btn" title="소리 켜기/끄기">
+              🔊
+            </button>
+            <div class="timer" id="g-timer">03:00</div>
+          </div>
         </header>
 
         <div class="brief" id="g-brief"></div>
