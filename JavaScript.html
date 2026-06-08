@@ -1,23 +1,23 @@
 <script>
   /* ===================================================================
-   * StockBattle 엔진 — 1단계
+   * StockBattle 엔진
    *  · 종목 인게임 선택(한 종목만 보유, 올인) · 워치리스트 + 차트 2개
    *  · 시드 기반 결정론 시뮬(멀티 대비) · 종목별 뉴스 아크(급등→되돌림)
-   *  · 거래 로그(AI 피드백용) · 닉네임 필수 · 레버리지 쿨다운(틱 기반)
-   *  뉴스 문구는 로컬 풀(=AI 자리). 2단계에서 Gemini로 교체.
+   *  · 거래 로그/수익률 추이 기록(상세화면 시각화·AI 피드백용)
+   *  · 멀티: 시드 공유 + 포지션 상태 공유 / 게임 단위 기록 그룹화
    * =================================================================== */
 
   const START_MONEY = 1000000;
   const TICK_MS = 1500;
   const VOL = 0.012;
-  const LEV_STEPS = [1, 2, 5, 10, 20]; // 설정은 10까지, 게임 중 10→20 가능
-  const COOLDOWN_TICKS = Math.round(25000 / TICK_MS); // ≈17틱(25초)
-  const EVENT_TICKS = 12; // 뉴스 아크 길이
-  const EVENT_DRIFT = 0.022; // 아크 드리프트 세기
-  const COUNTDOWN_MS = 2800; // 카운트다운(3·2·1·START, 700ms×4)
+  const LEV_STEPS = [1, 2, 5, 10, 20];
+  const COOLDOWN_TICKS = Math.round(25000 / TICK_MS);
+  const EVENT_TICKS = 12;
+  const EVENT_DRIFT = 0.022;
+  const COUNTDOWN_MS = 2800;
   function nowSync() {
     return Date.now() + ((typeof S !== "undefined" && S && S.clockOffset) || 0);
-  } // 기기 시계 보정된 현재시각
+  }
 
   // ---------- 사운드 (Web Audio, 파일 없이 합성음) ----------
   let AC = null,
@@ -112,6 +112,92 @@
   let S = {};
   let rng = Math.random;
   let charts = [null, null];
+
+  // ===== 테마(라이트/다크) + 결과 연출 =====
+  let THEME = {
+    up: "#f04452",
+    down: "#3182f6",
+    grid: "#f2f4f6",
+    tick: "#8b95a1",
+  };
+  function refreshTheme() {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    THEME = dark
+      ? { up: "#ff5b67", down: "#4d8eff", grid: "#2a2a31", tick: "#6b7178" }
+      : { up: "#f04452", down: "#3182f6", grid: "#f2f4f6", tick: "#8b95a1" };
+    charts.forEach((c) => {
+      if (c) {
+        c.options.scales.y.grid.color = THEME.grid;
+        c.options.scales.y.ticks.color = THEME.tick;
+        c.update("none");
+      }
+    });
+    if (detailChart) {
+      detailChart.options.scales.y.grid.color = THEME.grid;
+      detailChart.options.scales.y.ticks.color = THEME.tick;
+      detailChart.update("none");
+    }
+  }
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("sb-theme", theme);
+    } catch (e) {}
+    const sw = document.getElementById("theme-switch");
+    if (sw) sw.classList.toggle("on", theme === "dark");
+    refreshTheme();
+  }
+  // 수익률 카운트업 (0 → 최종값)
+  function countUp(el, to) {
+    const dur = 650,
+      t0 = performance.now();
+    el.classList.add("counting");
+    (function frame(t) {
+      const p = Math.min(1, (t - t0) / dur),
+        e = 1 - Math.pow(1 - p, 3),
+        v = to * e;
+      el.textContent = (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+      if (p < 1) requestAnimationFrame(frame);
+      else {
+        el.textContent = (to >= 0 ? "+" : "") + to.toFixed(2) + "%";
+        el.classList.remove("counting");
+      }
+    })(performance.now());
+  }
+  // 1등 컨페티
+  function confetti() {
+    const colors = ["#ff5b67", "#4d8eff", "#ffd54a", "#7c5cff", "#22c55e"];
+    for (let i = 0; i < 40; i++) {
+      const c = document.createElement("div");
+      c.className = "confetti";
+      c.style.left = Math.random() * 100 + "vw";
+      c.style.background = colors[i % colors.length];
+      c.style.animationDuration = 1.5 + Math.random() * 1.4 + "s";
+      c.style.animationDelay = Math.random() * 0.3 + "s";
+      document.body.appendChild(c);
+      setTimeout(() => c.remove(), 3500);
+    }
+  }
+  // 등수별 결과 연출 (메달 + 톤)
+  function celebrate(rank, liquidated) {
+    const hero = document.getElementById("result-hero"),
+      medal = document.getElementById("r-medal");
+    hero.classList.remove("win", "liq");
+    if (liquidated) {
+      hero.classList.add("liq");
+      medal.textContent = "💀";
+    } else if (rank === 1) {
+      hero.classList.add("win");
+      medal.textContent = "🏆";
+      confetti();
+    } else if (rank === 2) {
+      medal.textContent = "🥈";
+    } else if (rank === 3) {
+      medal.textContent = "🥉";
+    } else {
+      medal.textContent = "📊";
+    }
+  }
 
   const FALLBACK = {
     "000660.KS": 235000,
@@ -248,12 +334,16 @@
       featured: [0, 1],
       log: [],
       news: [],
+      startLev: setup.leverage,
     };
     S.news = genNewsSchedule();
+    S.gameId = "s_" + Date.now() + "_" + ((Math.random() * 1e6) | 0); // 싱글: 한 판이 한 게임
+    S.equitySeries = [0]; // 수익률 추이(상세 차트용)
 
     document.getElementById("g-source").textContent = source;
     document.getElementById("g-brief").textContent =
       "📊 변동성이 큰 장세입니다. 속보가 뜨는 종목을 노려 단타하세요!";
+    document.getElementById("g-timer").textContent = fmtTime(S.durationSec);
     fetchAINews();
     show("game");
     initCharts();
@@ -294,6 +384,50 @@
     return (equity(t) / START_MONEY - 1) * 100;
   }
 
+  // 멀티: 포지션 상태(state)와 공유 시세로 다른 플레이어 수익률을 각자 동일하게 계산
+  function myStateJSON() {
+    const t = S.me;
+    return JSON.stringify({
+      posIdx: t.posIdx,
+      entryPrice: t.entryPrice,
+      entryCapital: t.entryCapital,
+      leverage: t.leverage,
+      cash: t.cash,
+      liquidated: t.liquidated,
+    });
+  }
+  function equityFromState(st) {
+    if (!st) return START_MONEY;
+    if (st.liquidated) return 0;
+    if (st.posIdx == null || st.posIdx < 0) return st.cash;
+    return Math.max(
+      0,
+      st.entryCapital *
+        (1 + st.leverage * (instPrice(st.posIdx) / st.entryPrice - 1)),
+    );
+  }
+  function retFromState(st) {
+    return (equityFromState(st) / START_MONEY - 1) * 100;
+  }
+
+  // 닉네임 기반 고정 색상 아바타 (대기실·기록 공용)
+  function nickColor(nick) {
+    let h = 0;
+    const s = String(nick);
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return "hsl(" + (h % 360) + " 60% 50%)";
+  }
+  function avatarHTML(nick) {
+    const s = String(nick || "?");
+    return (
+      '<span class="avatar" style="background:' +
+      nickColor(s) +
+      '">' +
+      s.charAt(0).toUpperCase() +
+      "</span>"
+    );
+  }
+
   // ---------- 뉴스 일정 (시드 결정론) ----------
   function genNewsSchedule() {
     const total = S.totalTicks,
@@ -323,7 +457,7 @@
     return out.sort((a, b) => a.at - b.at);
   }
 
-  // 시작 시 AI 시황/뉴스 (성공하면 로컬 헤드라인을 AI 것으로 교체, 실패하면 그대로)
+  // 시작 시 AI 시황/뉴스
   function fetchAINews() {
     if (!(window.google && google.script && google.script.run)) return;
     const items = S.news.map((ev) => ({
@@ -400,11 +534,11 @@
       let vol = VOL,
         drift = 0;
       if (inst.event) {
-        const phase = 1 - inst.event.left / inst.event.total; // 0→1
+        const phase = 1 - inst.event.left / inst.event.total;
         drift =
           phase < 0.4
             ? inst.event.dir * EVENT_DRIFT
-            : -inst.event.dir * EVENT_DRIFT * 0.65; // 급등 후 되돌림
+            : -inst.event.dir * EVENT_DRIFT * 0.65;
         vol = VOL * 1.4;
         inst.event.left--;
         if (inst.event.left <= 0) inst.event = null;
@@ -426,12 +560,14 @@
         t.liquidated = true;
         t.posIdx = -1;
         if (t === S.me) liquidationFX();
+        if (t === S.me && S.mode === "multi") syncMyState(false);
       }
     });
     if (S.mode === "multi") maybeSyncMulti();
     else botThink();
     updateCharts();
     updateUI();
+    if (S.equitySeries) S.equitySeries.push(Math.round(ret(S.me) * 100) / 100); // 추이 기록
   }
 
   // ---------- 매매 / 레버리지 ----------
@@ -442,7 +578,7 @@
     if (t.strategy === "human")
       logEvt("buy", S.instruments[idx].label, t.entryPrice, t.leverage, null);
   }
-  function sell(t) {
+  function sell(t, silent) {
     if (t.posIdx < 0) return false;
     const idx = t.posIdx,
       eq = equity(t),
@@ -451,7 +587,7 @@
     t.posIdx = -1;
     t.entryPrice = 0;
     t.entryCapital = 0;
-    if (t.strategy === "human")
+    if (t.strategy === "human" && !silent)
       logEvt("sell", S.instruments[idx].label, instPrice(idx), t.leverage, pnl);
     return true;
   }
@@ -468,7 +604,7 @@
       const eq = equity(t);
       t.entryCapital = eq;
       t.entryPrice = instPrice(t.posIdx);
-    } // 현재가로 재기준
+    }
     t.leverage = LEV_STEPS[i + 1];
     t.levCdTick = S.tick + COOLDOWN_TICKS;
     if (t.strategy === "human")
@@ -497,17 +633,20 @@
     buy(S.me, S.featured[0]);
     sfx("buy");
     flash("cA-price");
+    if (S.mode === "multi") syncMyState(false);
     updateUI();
   };
   document.getElementById("cB-buy").onclick = () => {
     buy(S.me, S.featured[1]);
     sfx("buy");
     flash("cB-price");
+    if (S.mode === "multi") syncMyState(false);
     updateUI();
   };
   document.getElementById("btn-sell").onclick = () => {
     if (sell(S.me)) {
       sfx("sell");
+      if (S.mode === "multi") syncMyState(false);
       updateUI();
     }
   };
@@ -516,6 +655,7 @@
       sfx("lev");
       flash("cA-price");
       flash("cB-price");
+      if (S.mode === "multi") syncMyState(false);
     }
     updateUI();
   };
@@ -602,7 +742,7 @@
   };
   function makeChart(canvasId) {
     var ex = Chart.getChart(canvasId);
-    if (ex) ex.destroy(); // 캔버스 재사용 에러 방지
+    if (ex) ex.destroy();
     return new Chart(document.getElementById(canvasId), {
       type: "line",
       data: {
@@ -628,8 +768,8 @@
           x: { display: false },
           y: {
             display: true,
-            ticks: { color: "#8b95a1", font: { size: 9 } },
-            grid: { color: "#f2f4f6" },
+            ticks: { color: THEME.tick, font: { size: 9 } },
+            grid: { color: THEME.grid },
           },
         },
       },
@@ -658,7 +798,7 @@
       c._idx = S.featured[k];
       c.data.labels = inst.hist.map((_, i) => i);
       c.data.datasets[0].data = inst.hist;
-      c.data.datasets[0].borderColor = up ? "#f04452" : "#3182f6";
+      c.data.datasets[0].borderColor = up ? THEME.up : THEME.down;
       c.data.datasets[0].backgroundColor = up
         ? "rgba(240,68,82,.08)"
         : "rgba(49,130,246,.08)";
@@ -788,9 +928,11 @@
 
   // ---------- 종료 ----------
   function endGame() {
+    if (S._over) return;
+    S._over = true;
     clearInterval(S.timer);
     clearInterval(S.priceTimer);
-    if (S.me.posIdx >= 0) sell(S.me);
+    if (S.me.posIdx >= 0) sell(S.me, true);
     if (S.mode === "multi") {
       endGameMulti();
       return;
@@ -802,10 +944,11 @@
 
     document.getElementById("r-rank").textContent = myRank + "위";
     const rr = document.getElementById("r-return");
-    rr.textContent = (myRet >= 0 ? "+" : "") + myRet.toFixed(2) + "%";
     rr.className = "result-return " + (myRet >= 0 ? "up" : "down");
     document.getElementById("r-equity").textContent =
       fmtNum(equity(S.me)) + "원";
+    celebrate(myRank, S.me.liquidated);
+    countUp(rr, myRet);
 
     const brag =
       "StockBattle 🏆\n" +
@@ -839,15 +982,19 @@
       rank: myRank,
       totalPlayers: arr.length,
       summary: summary,
+      gameId: S.gameId,
+      chartData: JSON.stringify({ ret: S.equitySeries || [], log: S.log }),
     };
 
     if (window.google && google.script && google.script.run) {
-      aiEl.textContent = "🤖 AI가 거래를 분석하는 중...";
+      aiEl.className = "ai-feedback loading";
+      aiEl.textContent = "AI가 거래를 분석하는 중";
       note.textContent = S.email
         ? "결과 이메일이 잠시 후 발송됩니다 📧"
         : "결과가 저장되었습니다 (이메일 미입력)";
       google.script.run
         .withSuccessHandler((fb) => {
+          aiEl.className = "ai-feedback";
           aiEl.textContent = fb
             ? fb
             : "AI 분석을 불러오지 못했어요 (API 키/쿼터 확인). 거래 " +
@@ -855,11 +1002,13 @@
               "건 기록됨.";
         })
         .withFailureHandler(() => {
+          aiEl.className = "ai-feedback";
           aiEl.textContent =
             "AI 분석 호출 실패. 거래 " + S.log.length + "건 기록됨.";
         })
         .finishGame(payload);
     } else {
+      aiEl.className = "ai-feedback";
       aiEl.textContent =
         "(미리보기 모드) 거래 " +
         S.log.length +
@@ -897,7 +1046,30 @@
       if (c) c.destroy();
     });
     charts = [null, null];
-    show(S.mode === "multi" ? "home" : "setup");
+    if (S.mode === "multi" && MP && MP.roomId) {
+      enterLobby(MP.roomId, MP.nick, MP.isHost, MP.inviteUrl);
+      MP.lastStart = S.startTime || 0;
+    } else show("setup");
+  };
+  // 홈으로 = 다시하기 안 함 → 멀티면 서버에서 진짜 방 나가기
+  document.getElementById("btn-home").onclick = () => {
+    charts.forEach((c) => {
+      if (c) c.destroy();
+    });
+    charts = [null, null];
+    if (
+      S &&
+      S.mode === "multi" &&
+      MP &&
+      MP.roomId &&
+      window.google &&
+      google.script &&
+      google.script.run
+    ) {
+      google.script.run.leaveRoom(MP.roomId, MP.nick);
+      MP = {};
+    }
+    show("home");
   };
 
   // AI 피드백용 거래 요약 (기록 그대로, 지어내기 방지)
@@ -946,7 +1118,7 @@
   // ---------- 홈 / 기록 화면 ----------
   document.getElementById("home-single").onclick = () => show("setup");
   document.getElementById("home-history").onclick = () => {
-    loadHistory();
+    loadHistoryGames();
     show("history");
   };
   document.getElementById("home-join").onclick = () => {
@@ -955,21 +1127,28 @@
     show("join");
     setTimeout(() => document.getElementById("j-code").focus(), 60);
   };
+  document.getElementById("join-back").onclick = () => show("home");
   document.getElementById("setup-back").onclick = () => show("home");
   document.getElementById("hist-back").onclick = () => show("home");
-  document.getElementById("detail-back").onclick = () => {
-    loadHistory();
+  document.getElementById("gp-back").onclick = () => {
+    loadHistoryGames();
     show("history");
   };
-  document.getElementById("btn-home").onclick = () => {
-    charts.forEach((c) => {
-      if (c) c.destroy();
-    });
-    charts = [null, null];
-    show("home");
+  document.getElementById("detail-back").onclick = () => {
+    if (HIST.fromPlayers && HIST.current && HIST.current.count > 1)
+      show("game-players");
+    else {
+      loadHistoryGames();
+      show("history");
+    }
   };
+  document.getElementById("btn-home").addEventListener("click", () => {}); // (위에서 onclick 지정)
 
-  function loadHistory() {
+  // ===== 기록: 게임 단위 그룹 → 참가자 → 상세 (3단) =====
+  let HIST = { current: null, fromPlayers: false };
+  let detailChart = null;
+
+  function loadHistoryGames() {
     const box = document.getElementById("hist-list");
     box.innerHTML = '<div class="hist-empty">불러오는 중...</div>';
     if (!(window.google && google.script && google.script.run)) {
@@ -978,53 +1157,118 @@
       return;
     }
     google.script.run
-      .withSuccessHandler(renderHistory)
+      .withSuccessHandler(renderHistoryGames)
       .withFailureHandler((err) => {
         box.innerHTML =
           '<div class="hist-empty">기록 오류: ' +
           (err && err.message ? err.message : err) +
           "</div>";
       })
-      .getHistory("");
+      .getHistoryGames();
   }
-  function renderHistory(rows) {
+  function renderHistoryGames(games) {
     const box = document.getElementById("hist-list");
-    if (!rows || !rows.length) {
+    if (!games || !games.length) {
       box.innerHTML =
         '<div class="hist-empty">아직 기록이 없어요. 한 판 해보세요!</div>';
       return;
     }
     box.innerHTML = "";
-    rows.forEach((r) => {
-      const v = Number(r.finalReturn);
+    games.forEach((g) => {
       const badge =
-        r.mode === "multi"
+        g.mode === "multi"
           ? '<span class="mode-badge multi">멀티</span>'
           : '<span class="mode-badge">싱글</span>';
+      const meta = `${g.symbol || "-"} · ${g.leverage}배 · ${g.durationMin}분 · ${g.date}`;
       const d = document.createElement("div");
       d.className = "hist-item clickable";
-      d.onclick = () => loadDetail(r.id);
-      d.innerHTML = `<div class="hist-top"><b>${badge}${r.symbol || "-"} · ${r.leverage}배</b>
-      <span class="hist-ret ${v >= 0 ? "up" : "down"}">${(v >= 0 ? "+" : "") + v.toFixed(2)}% ›</span></div>
-      <div class="hist-meta">${r.date} · ${r.rank}/${r.totalPlayers}위</div>`;
+      d.onclick = () => openGame(g);
+      if (g.mode === "multi") {
+        const top = g.players[0],
+          tv = top ? Number(top.finalReturn) : 0;
+        d.innerHTML = `<div class="hist-row">
+          <span class="avatar" style="background:#3182f6">${g.count}</span>
+          <div class="hist-main"><div class="hist-name">멀티 · ${g.count}명 ${badge}</div>
+          <div class="hist-meta">${meta}</div></div>
+          <span class="hist-ret ${tv >= 0 ? "up" : "down"}">${top ? "🥇 " + (tv >= 0 ? "+" : "") + tv.toFixed(2) + "%" : ""}<span class="chev">›</span></span>
+        </div>`;
+      } else {
+        const p = g.players[0],
+          v = p ? Number(p.finalReturn) : 0;
+        d.innerHTML = `<div class="hist-row">
+          ${avatarHTML(p ? p.nickname : "?")}
+          <div class="hist-main"><div class="hist-name">${p ? p.nickname : "-"} ${badge}</div>
+          <div class="hist-meta">${meta}</div></div>
+          <span class="hist-ret ${v >= 0 ? "up" : "down"}">${(v >= 0 ? "+" : "") + v.toFixed(2)}%<span class="chev">›</span></span>
+        </div>`;
+      }
       box.appendChild(d);
     });
+  }
+  function openGame(g) {
+    HIST.current = g;
+    if (g.count <= 1 && g.players[0]) {
+      // 1명(싱글 등)이면 바로 상세
+      HIST.fromPlayers = false;
+      document.getElementById("detail-back").textContent = "← 기록";
+      loadDetail(g.players[0].id);
+      return;
+    }
+    HIST.fromPlayers = true;
+    document.getElementById("gp-meta").textContent =
+      (g.mode === "multi" ? "멀티" : "싱글") +
+      " · " +
+      g.symbol +
+      " · " +
+      g.leverage +
+      "배 · " +
+      g.durationMin +
+      "분 · " +
+      g.date +
+      " · " +
+      g.count +
+      "명";
+    const box = document.getElementById("gp-list");
+    box.innerHTML = "";
+    g.players.forEach((p) => {
+      const v = Number(p.finalReturn);
+      const d = document.createElement("div");
+      d.className = "hist-item clickable";
+      d.onclick = () => {
+        HIST.fromPlayers = true;
+        document.getElementById("detail-back").textContent = "← 참가자";
+        loadDetail(p.id);
+      };
+      d.innerHTML = `<div class="hist-row">
+        <span class="rank-no">${p.rank}</span>
+        ${avatarHTML(p.nickname)}
+        <div class="hist-main"><div class="hist-name">${p.nickname}</div></div>
+        <span class="hist-ret ${v >= 0 ? "up" : "down"}">${(v >= 0 ? "+" : "") + v.toFixed(2)}%<span class="chev">›</span></span>
+      </div>`;
+      box.appendChild(d);
+    });
+    show("game-players");
   }
   function loadDetail(id) {
     if (!(window.google && google.script && google.script.run)) return;
     show("detail");
-    document.getElementById("d-ai").textContent = "불러오는 중...";
+    const ai = document.getElementById("d-ai");
+    ai.className = "ai-feedback loading";
+    ai.textContent = "AI 분석 불러오는 중";
+    document.getElementById("d-detail").innerHTML = "";
     google.script.run
       .withSuccessHandler(renderDetail)
       .withFailureHandler(() => {
-        document.getElementById("d-ai").textContent =
-          "상세를 불러오지 못했어요.";
+        ai.className = "ai-feedback";
+        ai.textContent = "상세를 불러오지 못했어요.";
       })
       .getGameDetail(id);
   }
   function renderDetail(d) {
+    const ai = document.getElementById("d-ai");
+    ai.className = "ai-feedback";
     if (!d) {
-      document.getElementById("d-ai").textContent = "기록을 찾지 못했어요.";
+      ai.textContent = "기록을 찾지 못했어요.";
       return;
     }
     const v = Number(d.finalReturn);
@@ -1049,13 +1293,118 @@
       "/" +
       d.totalPlayers +
       "위";
-    document.getElementById("d-ai").textContent =
-      d.feedback || "AI 분석 기록이 없어요.";
-    document.getElementById("d-detail").textContent =
-      d.detail || "거래 내역 없음";
+    ai.textContent = d.feedback || "AI 분석 기록이 없어요.";
+
+    // 시각화: chartData 있으면 수익률 추이 차트 + 거래 타임라인, 없으면(옛 기록) 텍스트 폴백
+    let cd = null;
+    try {
+      if (d.chartData) cd = JSON.parse(d.chartData);
+    } catch (e) {}
+    if (cd) {
+      renderDetailChart(cd.ret);
+      document.getElementById("d-detail").innerHTML = tradeTimelineHTML(cd.log);
+    } else {
+      renderDetailChart(null);
+      document.getElementById("d-detail").innerHTML =
+        '<pre class="detail-pre">' +
+        escapeHtml(d.detail || "거래 내역 없음") +
+        "</pre>";
+    }
+  }
+  function escapeHtml(s) {
+    return String(s).replace(
+      /[&<>]/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
+    );
   }
 
-  // ====================== 멀티플레이 (Step B) ======================
+  // 수익률 추이 라인차트 (상세)
+  function renderDetailChart(retSeries) {
+    const card = document.getElementById("d-chart-card");
+    var ex = Chart.getChart("d-chart");
+    if (ex) ex.destroy();
+    detailChart = null;
+    if (!retSeries || retSeries.length < 2) {
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "";
+    const up = retSeries[retSeries.length - 1] >= 0;
+    detailChart = new Chart(document.getElementById("d-chart"), {
+      type: "line",
+      data: {
+        labels: retSeries.map((_, i) => i),
+        datasets: [
+          {
+            data: retSeries,
+            borderColor: up ? THEME.up : THEME.down,
+            borderWidth: 2,
+            fill: true,
+            backgroundColor: up
+              ? "rgba(240,68,82,.10)"
+              : "rgba(49,130,246,.10)",
+            tension: 0.3,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: { display: false },
+          y: {
+            display: true,
+            ticks: {
+              color: THEME.tick,
+              font: { size: 9 },
+              callback: (v) => v + "%",
+            },
+            grid: { color: THEME.grid },
+          },
+        },
+      },
+    });
+  }
+  // 거래 타임라인 HTML (색 배지 + 손익)
+  function tradeTimelineHTML(log) {
+    if (!log || !log.length)
+      return '<div class="tl-empty">거래 없음 (관망)</div>';
+    return log
+      .map((e) => {
+        const t = fmtTime(e.sec);
+        let cls,
+          label,
+          main = "";
+        if (e.type === "buy") {
+          cls = "tl-buy";
+          label = "매수";
+          main = e.label + " @" + fmtNum(e.price) + " · " + e.lev + "배";
+        } else if (e.type === "sell") {
+          cls = "tl-sell";
+          label = "매도";
+          main = e.label + " @" + fmtNum(e.price);
+        } else if (e.type === "levup") {
+          cls = "tl-lev";
+          label = "레버리지";
+          main = e.lev + "배로 상향";
+        } else if (e.type === "liq") {
+          cls = "tl-liq";
+          label = "청산";
+          main = e.label + " @" + fmtNum(e.price);
+        } else return "";
+        const pnl =
+          e.type === "sell" && e.pnl != null
+            ? `<span class="tl-pnl ${e.pnl >= 0 ? "up" : "down"}">${e.pnl >= 0 ? "+" : ""}${fmtNum(e.pnl)}</span>`
+            : "";
+        return `<div class="tl-row"><span class="tl-time">${t}</span><span class="tl-type ${cls}">${label}</span><span class="tl-main">${main}</span>${pnl}</div>`;
+      })
+      .join("");
+  }
+
+  // ====================== 멀티플레이 ======================
   const msetup = { category: "kr", leverage: 1, durationMin: 3 };
   let MP = {};
   function renderMHint() {
@@ -1110,7 +1459,7 @@
       });
   };
 
-  // 입장 (링크 자동 채움 or 코드 직접 입력)
+  // 입장
   document.getElementById("j-code").addEventListener("input", (e) => {
     e.target.value = e.target.value.toUpperCase();
   });
@@ -1160,14 +1509,15 @@
   };
 
   function enterLobby(roomId, nick, isHost, inviteUrl) {
-    MP = { roomId, nick, isHost, inviteUrl: inviteUrl || "", started: false };
+    MP = { roomId, nick, isHost, inviteUrl: inviteUrl || "", lastStart: 0 };
     document.getElementById("l-code").textContent = roomId;
+    document.getElementById("btn-startroom").textContent = "게임 시작";
+    document.getElementById("btn-startroom").disabled = false;
     document.getElementById("btn-startroom").style.display = isHost
       ? ""
       : "none";
     document.getElementById("l-wait").style.display = isHost ? "none" : "";
     document.getElementById("l-link").textContent = "";
-    // 샌드박스 iframe이라 location으로는 /exec 주소를 못 얻음 → GAS URL API로 실제 공개 주소 구성
     try {
       google.script.url.getLocation(function (loc) {
         if (loc && loc.url) {
@@ -1198,11 +1548,12 @@
       seen[k] = 1;
       return true;
     });
-    plist.forEach((p, i) => {
+    plist.forEach((p) => {
+      const host = String(p.nick) === String(d.host);
       const li = document.createElement("li");
       li.className =
-        "rank-row" + (String(p.nick) === String(MP.nick) ? " me" : "");
-      li.innerHTML = `<span class="rank-no">${i + 1}</span><span class="rank-name">${p.nick}${String(p.nick) === String(d.host) ? " 👑" : ""}</span>`;
+        "lobby-row" + (String(p.nick) === String(MP.nick) ? " me" : "");
+      li.innerHTML = `${avatarHTML(p.nick)}<span class="lobby-nick">${p.nick}</span>${host ? '<span class="host-tag">👑 방장</span>' : ""}`;
       ul.appendChild(li);
     });
     document.getElementById("l-count").textContent = "(" + plist.length + "명)";
@@ -1217,8 +1568,8 @@
       MP.inviteUrl = d.inviteUrl;
       document.getElementById("l-link").textContent = MP.inviteUrl;
     }
-    if (d.status === "playing" && d.startTime && !MP.started) {
-      MP.started = true;
+    if (d.status === "playing" && d.startTime && d.startTime > MP.lastStart) {
+      MP.lastStart = d.startTime;
       clearInterval(MP.pollTimer);
       startMultiGame(d);
     }
@@ -1233,16 +1584,24 @@
         this.textContent = "게임 시작";
       })
       .startRoom(MP.roomId);
-    // 시작 시각은 폴링이 감지해 전원 동시 시작
   };
+  // 대기실 나가기 = 서버에서 진짜 방 나가기
   document.getElementById("lobby-leave").onclick = () => {
     clearInterval(MP.pollTimer);
+    if (
+      MP &&
+      MP.roomId &&
+      window.google &&
+      google.script &&
+      google.script.run
+    ) {
+      google.script.run.leaveRoom(MP.roomId, MP.nick);
+    }
     show("home");
   };
   document.getElementById("l-copy").onclick = async function () {
     const url = MP.inviteUrl || "";
     const text = "StockBattle 주식 대결에 초대합니다! 방 코드 " + MP.roomId;
-    // 1) 휴대폰/지원 브라우저: OS 공유 시트(카톡·인스타·메시지 등)
     if (navigator.share) {
       try {
         await navigator.share({
@@ -1253,9 +1612,8 @@
         return;
       } catch (e) {
         if (e && e.name === "AbortError") return;
-      } // 사용자가 닫음
+      }
     }
-    // 2) 폴백: 초대 링크 클립보드 복사 → 카톡 등에 붙여넣기
     const copyText = url || text;
     let ok = false;
     try {
@@ -1280,7 +1638,7 @@
       : "복사 실패 (아래 링크를 길게 눌러 복사)";
   };
 
-  // 멀티 게임 시작 (시드 공유 → 가격/뉴스 전원 동일, 시작가는 결정론적 FALLBACK 사용)
+  // 멀티 게임 시작 (시드 공유 → 가격/뉴스 전원 동일)
   function startMultiGame(d) {
     rng = mulberry32(d.seed);
     const items = INSTR[d.category].map(([symbol, label]) => ({
@@ -1322,13 +1680,17 @@
       players: d.players || [],
       syncEvery: 2,
       startLev: d.leverage,
+      startTime: d.startTime,
     };
     S.news = genNewsSchedule();
-    S.clockOffset = d.serverNow ? d.serverNow - Date.now() : 0; // 기기 시계 차이 보정
-    S.endAt = d.startTime + COUNTDOWN_MS + S.durationSec * 1000; // 전원 동일한 절대 종료시각
+    S.gameId = "r_" + MP.roomId + "_" + d.startTime; // 같은 방·같은 라운드 = 전원 동일 gameId
+    S.equitySeries = [0];
+    S.clockOffset = d.serverNow ? d.serverNow - Date.now() : 0;
+    S.endAt = d.startTime + COUNTDOWN_MS + S.durationSec * 1000;
     document.getElementById("g-source").textContent = "멀티";
     document.getElementById("g-brief").textContent =
       "📊 친구들과 실시간 대결! 같은 시장·같은 뉴스로 승부.";
+    document.getElementById("g-timer").textContent = fmtTime(S.durationSec);
     show("game");
     initCharts();
     updateCharts();
@@ -1342,29 +1704,33 @@
     }, delay);
   }
 
-  // 내 수익률 주기적 업로드 + 전체 순위 수신
-  function maybeSyncMulti() {
-    if (S.tick % S.syncEvery !== 0) return;
+  // 내 포지션 상태 업로드 + 전체 명단(상태) 갱신
+  function syncMyState(finished) {
+    if (S.mode !== "multi") return;
     if (!(window.google && google.script && google.script.run)) return;
+    if (S.ended && !finished) return;
     google.script.run
       .withSuccessHandler((ps) => {
-        if (ps && !S.ended) S.players = ps;
-      }) // 종료 후 도착분은 무시(스테일 방지)
+        if (ps && (!S.ended || finished)) S.players = ps;
+      })
       .withFailureHandler(() => {})
-      .updatePlayer(S.roomId, S.nick, +ret(S.me).toFixed(2), false);
+      .updatePlayer(S.roomId, S.nick, myStateJSON(), !!finished);
+  }
+  function maybeSyncMulti() {
+    if (S.tick % S.syncEvery === 0) syncMyState(false);
   }
 
-  // 멀티 순위 (닉 기준 dedup으로 서버 중복·타입 이슈 방어, 내 값은 로컬 최신)
+  // 멀티 순위: 각자 보유 상태 + 공유 시세로 전원 수익률 동일 계산
   function renderRankMulti(reveal) {
     const byNick = {};
     (S.players || []).forEach((p) => {
       byNick[String(p.nick)] = {
         nick: String(p.nick),
-        ret: Number(p.ret) || 0,
+        ret: retFromState(p.state),
       };
     });
     const meKey = String(S.nick);
-    byNick[meKey] = { nick: meKey, ret: ret(S.me) }; // 나는 항상 1개, 로컬 최신값
+    byNick[meKey] = { nick: meKey, ret: ret(S.me) };
     const list = Object.keys(byNick)
       .map((k) => byNick[k])
       .sort((a, b) => b.ret - a.ret);
@@ -1384,27 +1750,44 @@
   }
 
   function endGameMulti() {
-    S.ended = true; // 종료 후 중간 동기화가 데이터 못 덮게
+    S.ended = true;
     const myRet = ret(S.me);
-    const setupResult = (ps) => {
-      if (ps) S.players = ps;
-      const myRank = paintMulti(myRet); // 순위 + 등수/수익 표시
-      sfx(myRank === 1 ? "win" : "sell");
-      triggerMultiAI(myRank, myRet); // 저장 + AI
+    show("result");
+    try {
       document.getElementById("r-email-note").textContent =
         "친구와의 실시간 대결 결과입니다.";
-      show("result");
-      // 늦게 끝난 사람 최종값까지 수렴 (최대 ~15초, 매번 재렌더)
+    } catch (e) {}
+    let done = false;
+    const setupResult = (ps) => {
+      if (done) return;
+      done = true;
+      if (ps) S.players = ps;
+      let myRank = 1;
+      try {
+        myRank = paintMulti(myRet);
+      } catch (e) {}
+      try {
+        sfx(myRank === 1 ? "win" : "sell");
+      } catch (e) {}
+      try {
+        celebrate(myRank, S.me.liquidated);
+        countUp(document.getElementById("r-return"), myRet);
+      } catch (e) {}
+      try {
+        triggerMultiAI(myRank, myRet);
+      } catch (e) {}
       let tries = 0;
       const poll = () => {
         tries++;
         google.script.run
           .withSuccessHandler((p2) => {
             if (p2) S.players = p2;
-            paintMulti(myRet);
+            try {
+              paintMulti(myRet);
+            } catch (e) {}
             const all =
               (S.players || []).length && S.players.every((x) => x.finished);
-            if (!(all && tries >= 2) && tries < 10) setTimeout(poll, 1500); // 전원 종료+2회 이상 폴링해야 멈춤
+            if (!(all && tries >= 2) && tries < 10) setTimeout(poll, 1500);
           })
           .withFailureHandler(() => {
             if (tries < 10) setTimeout(poll, 1500);
@@ -1417,7 +1800,8 @@
       google.script.run
         .withSuccessHandler(setupResult)
         .withFailureHandler(() => setupResult(S.players))
-        .updatePlayer(S.roomId, S.nick, +myRet.toFixed(2), true);
+        .updatePlayer(S.roomId, S.nick, myStateJSON(), true);
+      setTimeout(() => setupResult(S.players), 5000);
     } else setupResult(S.players);
   }
 
@@ -1463,11 +1847,15 @@
       rank: myRank,
       totalPlayers: total,
       summary: summary,
+      gameId: S.gameId,
+      chartData: JSON.stringify({ ret: S.equitySeries || [], log: S.log }),
     };
     if (window.google && google.script && google.script.run) {
-      aiEl.textContent = "🤖 AI가 거래를 분석하는 중...";
+      aiEl.className = "ai-feedback loading";
+      aiEl.textContent = "AI가 거래를 분석하는 중";
       google.script.run
         .withSuccessHandler((fb) => {
+          aiEl.className = "ai-feedback";
           aiEl.textContent = fb
             ? fb
             : "AI 분석을 불러오지 못했어요 (API 키/쿼터 확인). 거래 " +
@@ -1475,11 +1863,13 @@
               "건 기록됨.";
         })
         .withFailureHandler(() => {
+          aiEl.className = "ai-feedback";
           aiEl.textContent =
             "AI 분석 호출 실패. 거래 " + S.log.length + "건 기록됨.";
         })
-        .finishGame(payload); // 저장(히스토리) + AI 피드백
+        .finishGame(payload);
     } else {
+      aiEl.className = "ai-feedback";
       aiEl.textContent = "(미리보기 모드) 거래 " + S.log.length + "건 기록됨.";
     }
   }
@@ -1489,6 +1879,22 @@
     document.getElementById("j-code").value = window.ROOM_PARAM;
     show("join");
   }
+
+  // 테마 토글 + 시작 시 저장된 테마 적용
+  (function () {
+    const sw = document.getElementById("theme-switch");
+    if (sw)
+      sw.onclick = function () {
+        const dark =
+          document.documentElement.getAttribute("data-theme") === "dark";
+        applyTheme(dark ? "light" : "dark");
+      };
+    let saved = "light";
+    try {
+      saved = localStorage.getItem("sb-theme") || "light";
+    } catch (e) {}
+    applyTheme(saved);
+  })();
 
   // ---------- 유틸 ----------
   function show(name) {

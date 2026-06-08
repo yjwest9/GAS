@@ -2,6 +2,16 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
+    <script>
+      try {
+        document.documentElement.setAttribute(
+          "data-theme",
+          localStorage.getItem("sb-theme") || "light",
+        );
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    </script>
     <?!= include('Stylesheet'); ?>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -13,6 +23,18 @@
     <div class="app">
       <!-- ===================== 홈 (P1) ===================== -->
       <section id="screen-home" class="screen active">
+        <div class="top-bar">
+          <span class="top-bar-brand">StockBattle</span>
+          <button
+            id="theme-switch"
+            class="theme-switch"
+            type="button"
+            aria-label="다크모드 전환"
+          >
+            <span class="ts-label">다크모드</span>
+            <span class="ts-track"><span class="ts-thumb"></span></span>
+          </button>
+        </div>
         <div class="home-hero">
           <div class="brand-mark big">SB</div>
           <h1 class="home-title">StockBattle</h1>
@@ -193,6 +215,7 @@
 
       <!-- ===================== 입장 (초대 링크) ===================== -->
       <section id="screen-join" class="screen">
+        <button id="join-back" class="back">← 홈</button>
         <header class="brand">
           <div class="brand-mark">SB</div>
           <div>
@@ -334,14 +357,18 @@
 
       <!-- ===================== 결과 (P5) ===================== -->
       <section id="screen-result" class="screen">
-        <div class="result-hero">
+        <div class="result-hero" id="result-hero">
+          <div class="result-medal" id="r-medal"></div>
           <div class="result-rank" id="r-rank">1위</div>
           <div class="result-return" id="r-return">+0.00%</div>
           <div class="result-sub" id="r-equity">1,000,000원</div>
         </div>
 
-        <div class="card">
-          <div class="stat-label">🤖 AI 트레이딩 분석</div>
+        <!-- AI 분석: 우리 웹의 강점 → 시각적으로 강조 -->
+        <div class="ai-card">
+          <div class="ai-card-head">
+            <span class="ai-badge">AI</span><span>트레이딩 분석</span>
+          </div>
           <div class="ai-feedback" id="r-ai">분석 준비 중...</div>
         </div>
 
@@ -361,7 +388,16 @@
       <section id="screen-history" class="screen">
         <button id="hist-back" class="back">← 홈</button>
         <h2 class="page-title">최근 게임 기록</h2>
+        <p class="page-sub">한 게임을 누르면 참가자별 결과를 볼 수 있어요</p>
         <div id="hist-list" class="hist-list"></div>
+      </section>
+
+      <!-- ===================== 게임별 참가자 ===================== -->
+      <section id="screen-game-players" class="screen">
+        <button id="gp-back" class="back">← 기록</button>
+        <h2 class="page-title">참가자별 결과</h2>
+        <div class="card"><div class="hist-meta" id="gp-meta"></div></div>
+        <div id="gp-list" class="hist-list"></div>
       </section>
 
       <!-- ===================== 기록 상세 ===================== -->
@@ -384,13 +420,24 @@
           </div>
           <div class="hist-meta" id="d-meta"></div>
         </div>
-        <div class="card">
-          <div class="stat-label">🤖 AI 트레이딩 분석</div>
+
+        <div class="ai-card">
+          <div class="ai-card-head">
+            <span class="ai-badge">AI</span><span>트레이딩 분석</span>
+          </div>
           <div class="ai-feedback" id="d-ai">불러오는 중...</div>
         </div>
+
+        <div class="card" id="d-chart-card">
+          <div class="stat-label">
+            수익률 추이 <span class="muted">· 게임 진행에 따른 내 수익률</span>
+          </div>
+          <div class="detail-chart-wrap"><canvas id="d-chart"></canvas></div>
+        </div>
+
         <div class="card">
           <div class="stat-label">거래 내역</div>
-          <pre class="detail-pre" id="d-detail"></pre>
+          <div class="trade-timeline" id="d-detail"></div>
         </div>
       </section>
 

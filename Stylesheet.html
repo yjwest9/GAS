@@ -12,6 +12,7 @@
     --blue-dark: #1b64da;
     --up: #f04452;
     --down: #3182f6;
+    --ai: #7c5cff;
     --radius: 18px;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.04);
   }
@@ -24,6 +25,7 @@
   html,
   body {
     overflow-x: hidden;
+    background: var(--bg);
   }
   body {
     font-family:
@@ -38,6 +40,7 @@
   }
   .app {
     max-width: 1280px;
+    width: 100%;
     margin: 0 auto;
     padding: 20px 16px 120px;
     position: relative;
@@ -170,14 +173,18 @@
     outline: none;
     text-transform: uppercase;
     font-family: inherit;
+    font-size: 24px;
+    letter-spacing: 5px;
+    padding: 18px;
+    caret-color: var(--blue);
   }
   input.code-input:focus {
     border-color: var(--blue);
     background: #fff;
   }
   input.code-input::placeholder {
-    font-size: 18px;
-    letter-spacing: 2px;
+    font-size: 16px;
+    letter-spacing: 1px;
     color: var(--text3);
     font-weight: 600;
     text-transform: none;
@@ -639,12 +646,169 @@
     color: var(--text2);
     font-weight: 600;
   }
-  .ai-feedback {
-    margin-top: 10px;
-    font-size: 14px;
-    line-height: 1.65;
-    color: var(--text2);
+
+  /* === AI 분석 강조 카드 (우리 웹의 강점) === */
+  .ai-card {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #eef4ff 0%, #f3eeff 100%);
+    border: 1px solid #dde4ff;
+    border-radius: var(--radius);
+    padding: 20px 20px 20px 22px;
+    margin-bottom: 14px;
+    box-shadow:
+      0 2px 8px rgba(124, 92, 255, 0.08),
+      0 10px 24px rgba(49, 130, 246, 0.06);
   }
+  .ai-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    background: linear-gradient(180deg, var(--blue), var(--ai));
+  }
+  .ai-card-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 14.5px;
+    font-weight: 800;
+    color: var(--blue-dark);
+    margin-bottom: 12px;
+  }
+  .ai-badge {
+    display: inline-grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--blue), var(--ai));
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 4px 9px;
+    border-radius: 8px;
+    letter-spacing: 0.6px;
+    box-shadow: 0 2px 6px rgba(124, 92, 255, 0.3);
+  }
+  .ai-feedback {
+    font-size: 15.5px;
+    line-height: 1.75;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .ai-feedback.loading {
+    color: var(--text3);
+    position: relative;
+  }
+  .ai-feedback.loading::after {
+    content: "";
+    display: inline-block;
+    width: 1.4em;
+    text-align: left;
+    animation: dots 1.2s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0% {
+      content: "";
+    }
+    25% {
+      content: ".";
+    }
+    50% {
+      content: "..";
+    }
+    75% {
+      content: "...";
+    }
+  }
+
+  /* === 수익률 추이 차트 (상세) === */
+  .detail-chart-wrap {
+    height: 180px;
+    margin-top: 12px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* === 거래 타임라인 (상세) === */
+  .trade-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .tl-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    background: #f7f8fa;
+  }
+  .tl-time {
+    font-size: 12px;
+    color: var(--text3);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+    width: 40px;
+  }
+  .tl-type {
+    font-size: 11.5px;
+    font-weight: 800;
+    padding: 4px 9px;
+    border-radius: 8px;
+    flex: none;
+    min-width: 54px;
+    text-align: center;
+  }
+  .tl-buy {
+    background: #fff0f1;
+    color: var(--up);
+  }
+  .tl-sell {
+    background: #e8f1fe;
+    color: var(--blue-dark);
+  }
+  .tl-lev {
+    background: #fff5e0;
+    color: #b8860b;
+  }
+  .tl-liq {
+    background: #191f28;
+    color: #fff;
+  }
+  .tl-main {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tl-pnl {
+    font-size: 13px;
+    font-weight: 800;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .tl-empty {
+    text-align: center;
+    color: var(--text3);
+    padding: 22px 0;
+    font-size: 13.5px;
+  }
+  .detail-pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12.5px;
+    color: var(--text2);
+    line-height: 1.65;
+    margin-top: 10px;
+    font-family: "Pretendard", sans-serif;
+  }
+
   .email-note {
     text-align: center;
     font-size: 13px;
@@ -784,6 +948,9 @@
     .chart-wrap {
       height: 180px;
     }
+    .detail-chart-wrap {
+      height: 220px;
+    }
   }
   /* PC */
   @media (min-width: 1025px) {
@@ -802,7 +969,7 @@
       padding-bottom: 40px;
     }
   }
-  /* 초소형 */
+  /* 초소형 (가로 스크롤/잘림 없이 같이 줄어들게) */
   @media (max-width: 380px) {
     .seg-btn {
       font-size: 13px;
@@ -818,6 +985,35 @@
       grid-template-columns: 1fr;
     }
   }
+  @media (max-width: 340px) {
+    .app {
+      padding: 16px 10px 110px;
+    }
+    .room-code {
+      font-size: 26px;
+      letter-spacing: 3px;
+      padding: 14px;
+    }
+    input.code-input {
+      font-size: 20px;
+      letter-spacing: 3px;
+      padding: 14px;
+    }
+    .seg-btn {
+      font-size: 12px;
+      padding: 10px 0;
+    }
+    .result-return {
+      font-size: 36px;
+    }
+    .home-title {
+      font-size: 26px;
+    }
+    .ai-feedback {
+      font-size: 14.5px;
+    }
+  }
+
   /* ===== 홈 ===== */
   .home-hero {
     text-align: center;
@@ -885,9 +1081,6 @@
   .mode-card.single .mode-sub {
     color: #dbeafe;
   }
-  .mode-card.multi {
-    opacity: 0.7;
-  }
   .mode-card:disabled {
     cursor: not-allowed;
   }
@@ -899,16 +1092,6 @@
     font-size: 13px;
     margin-top: 4px;
     color: var(--text3);
-  }
-  .soon {
-    font-size: 11px;
-    font-weight: 700;
-    background: #fff0f0;
-    color: var(--up);
-    padding: 2px 8px;
-    border-radius: 999px;
-    margin-left: 6px;
-    vertical-align: middle;
   }
   .btn-text {
     display: block;
@@ -939,7 +1122,12 @@
   .page-title {
     font-size: 22px;
     font-weight: 800;
-    margin: 4px 4px 16px;
+    margin: 4px 4px 6px;
+  }
+  .page-sub {
+    font-size: 13px;
+    color: var(--text3);
+    margin: 0 4px 16px;
   }
   .hist-list {
     display: flex;
@@ -952,21 +1140,6 @@
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: var(--shadow);
-  }
-  .hist-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-  }
-  .hist-top b {
-    font-size: 15px;
-  }
-  .hist-ret {
-    font-size: 18px;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-    flex: none;
   }
   .hist-meta {
     font-size: 13px;
@@ -986,6 +1159,75 @@
   .hist-item.clickable:active {
     background: #f3f8ff;
   }
+  .avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    color: #fff;
+    font-weight: 800;
+    font-size: 15px;
+    flex: none;
+  }
+  .hist-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .hist-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .hist-name {
+    font-size: 15px;
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hist-ret {
+    font-size: 18px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    flex: none;
+  }
+  .hist-ret .chev {
+    margin-left: 6px;
+    color: var(--text3);
+    font-weight: 400;
+  }
+  .lobby-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    background: #f9fafb;
+    margin-bottom: 8px;
+  }
+  .lobby-row.me {
+    background: #e7f0ff;
+  }
+  .lobby-nick {
+    flex: 1;
+    min-width: 0;
+    font-weight: 700;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .host-tag {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--blue);
+    flex: none;
+  }
+  .watchlist > * {
+    min-width: 0;
+  }
   .btn-secondary {
     width: 100%;
     background: #f2f4f6;
@@ -999,13 +1241,264 @@
     font-family: inherit;
     margin-top: 10px;
   }
-  .detail-pre {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 12.5px;
+
+  /* ===== 테마 스위치 (홈 상단) ===== */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 4px;
+  }
+  .top-bar-brand {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text3);
+    letter-spacing: 0.3px;
+  }
+  .theme-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 6px 2px;
+  }
+  .ts-label {
+    font-size: 13px;
+    font-weight: 700;
     color: var(--text2);
-    line-height: 1.65;
-    margin-top: 10px;
-    font-family: "Pretendard", sans-serif;
+  }
+  .ts-track {
+    width: 46px;
+    height: 26px;
+    border-radius: 999px;
+    background: var(--line);
+    position: relative;
+    transition: background 0.2s;
+  }
+  .ts-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transition: transform 0.2s;
+  }
+  .theme-switch.on .ts-track {
+    background: var(--blue);
+  }
+  .theme-switch.on .ts-thumb {
+    transform: translateX(20px);
+  }
+
+  /* ===== 결과 화면 연출 (등수별) ===== */
+  .result-medal {
+    font-size: 52px;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .result-medal:empty {
+    display: none;
+  }
+  .result-hero.win .result-rank {
+    background: linear-gradient(135deg, #ffd95a, #ffb020);
+    color: #5a3d00;
+  }
+  .result-hero.liq {
+    opacity: 0.92;
+  }
+  .result-hero.liq .result-medal {
+    filter: grayscale(0.25);
+  }
+  .result-hero.liq .result-rank {
+    background: #eceef1;
+    color: #8b95a1;
+  }
+  .confetti {
+    position: fixed;
+    top: -16px;
+    width: 9px;
+    height: 14px;
+    border-radius: 1px;
+    z-index: 80;
+    pointer-events: none;
+    opacity: 0.95;
+    animation-name: conffall;
+    animation-timing-function: cubic-bezier(0.3, 0.6, 0.7, 1);
+    animation-fill-mode: forwards;
+  }
+  @keyframes conffall {
+    0% {
+      transform: translateY(0) rotate(0deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(110vh) rotate(720deg);
+      opacity: 0.6;
+    }
+  }
+
+  /* ===== 다크 모드 (토스증권 다크 참고) ===== */
+  :root[data-theme="dark"] {
+    --bg: #17171c;
+    --surface: #1f1f25;
+    --line: #2d2d35;
+    --text: #e8eaed;
+    --text2: #9aa0aa;
+    --text3: #6b7178;
+    --blue: #4d8eff;
+    --blue-dark: #6aa0ff;
+    --up: #ff5b67;
+    --down: #4d8eff;
+    --ai: #9d86ff;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.45);
+  }
+  [data-theme="dark"] .text-input {
+    background: #16161a;
+    border-color: #2d2d35;
+    color: var(--text);
+  }
+  [data-theme="dark"] .text-input:focus {
+    background: #16161a;
+    border-color: var(--blue);
+  }
+  [data-theme="dark"] .text-input.invalid {
+    background: #241a1c;
+    border-color: var(--up);
+  }
+  [data-theme="dark"] .text-input::placeholder {
+    color: var(--text3);
+  }
+  [data-theme="dark"] .room-code {
+    background: #16161a;
+    color: var(--text);
+  }
+  [data-theme="dark"] input.code-input {
+    background: #16161a;
+    border-color: #2d2d35;
+    color: var(--text);
+  }
+  [data-theme="dark"] .seg-btn {
+    background: #16161a;
+    border-color: #2d2d35;
+    color: var(--text2);
+  }
+  [data-theme="dark"] .seg-btn.active {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+  }
+  [data-theme="dark"] .disclaimer {
+    background: #241f12;
+    border-color: #46380f;
+    color: #d8c89a;
+  }
+  [data-theme="dark"] .btn-copy {
+    background: #26262d;
+    color: var(--text2);
+  }
+  [data-theme="dark"] .btn-copy.done {
+    background: #1b2a44;
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .btn-secondary {
+    background: #26262d;
+    color: var(--text2);
+  }
+  [data-theme="dark"] .btn-ghost {
+    background: #26262d;
+    color: var(--text2);
+  }
+  [data-theme="dark"] .mute-btn {
+    background: #26262d;
+  }
+  [data-theme="dark"] .brief {
+    background: #16213a;
+    border-color: #23365f;
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .lev-tag {
+    background: #3a1d20;
+    color: var(--up);
+  }
+  [data-theme="dark"] .pos-state {
+    background: #16161a;
+    color: var(--text3);
+  }
+  [data-theme="dark"] .watch-item.held {
+    background: #16213a;
+  }
+  [data-theme="dark"] .rank-row {
+    background: #16161a;
+  }
+  [data-theme="dark"] .rank-row.me {
+    background: #16213a;
+  }
+  [data-theme="dark"] .action-bar {
+    background: rgba(23, 23, 28, 0.92);
+    border-top-color: #2d2d35;
+  }
+  [data-theme="dark"] .result-rank {
+    background: #16213a;
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .result-hero.liq .result-rank {
+    background: #26262d;
+    color: #9aa0aa;
+  }
+  [data-theme="dark"] .ai-card {
+    background: linear-gradient(135deg, #171c2e 0%, #221b34 100%);
+    border-color: #2f3048;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  }
+  [data-theme="dark"] .ai-card-head {
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .tl-row {
+    background: #16161a;
+  }
+  [data-theme="dark"] .tl-buy {
+    background: #2e171a;
+    color: var(--up);
+  }
+  [data-theme="dark"] .tl-sell {
+    background: #16213a;
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .tl-lev {
+    background: #2c2410;
+    color: #e0b450;
+  }
+  [data-theme="dark"] .tl-liq {
+    background: #000;
+    color: #fff;
+  }
+  [data-theme="dark"] .countdown {
+    background: rgba(23, 23, 28, 0.96);
+  }
+  [data-theme="dark"] .countdown-num.start {
+    color: var(--up);
+  }
+  [data-theme="dark"] .hist-item.clickable:active {
+    background: #16213a;
+  }
+  [data-theme="dark"] .lobby-row {
+    background: #16161a;
+  }
+  [data-theme="dark"] .lobby-row.me {
+    background: #16213a;
+  }
+  [data-theme="dark"] .mode-badge {
+    background: #2a2a31;
+    color: var(--text2);
+  }
+  [data-theme="dark"] .mode-badge.multi {
+    background: #16213a;
+    color: #9cc2ff;
   }
 </style>

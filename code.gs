@@ -1,21 +1,19 @@
 /**
- * StockBattle — GAS 서버 로직 (싱글 모드 / P4 게임화면 중심)
+ * StockBattle — GAS 서버 로직 (싱글 + 멀티)
  *
- * 역할은 딱 3가지:
+ * 역할:
  *   ① getSeedPrice  : 게임 시작 시 실제 시세 1회 호출(시드). 실패하면 폴백값.
  *   ② saveResult    : 게임 종료 시 결과를 Sheets에 PENDING 상태로 저장.
- *   ③ processPendingEmails : 1분마다 도는 설치형 트리거가 PENDING을 스캔해
- *                            이메일 + Slack 발송 후 SENT 로 표시.
+ *   ③ processPendingEmails : 1분 트리거가 PENDING을 스캔해 이메일+Slack 발송 후 SENT 표시.
  *
  * 가격 시뮬레이션(랜덤워크)은 전부 클라이언트(JavaScript.html)에서 돈다.
- * GAS는 6분 실행 한도가 있으므로 실시간 루프를 서버에 두지 않는다.
  *
- * ── 최초 1회 세팅 순서 ──
- *   1) 구글 스프레드시트 새로 만들고 URL의 /d/ 와 /edit 사이 ID 를 복사
- *   2) 아래 SPREADSHEET_ID 에 붙여넣기 (SLACK_WEBHOOK_URL 은 선택)
- *   3) 편집기 상단에서 setupSpreadsheet 실행 (시트/헤더 생성)
- *   4) createEmailTrigger 실행 (1분 트리거 설치)
- *   5) 배포 > 웹 앱: "나로 실행", 액세스 "링크가 있는 모든 사용자"
+ * ── 최초 1회 세팅 ──
+ *   1) 스프레드시트 ID를 SPREADSHEET_ID에 넣기
+ *   2) setupSpreadsheet 실행 (시트/헤더 생성)  ※기존 시트가 있으면 데이터가 지워짐
+ *      - 데이터 보존하며 새 컬럼(gameId, chartData)을 추가하려면 setupSpreadsheet 대신 addNewColumns 실행
+ *   3) createEmailTrigger 실행 (1분 트리거 설치)
+ *   4) 배포 > 웹 앱: "나로 실행", 액세스 "링크가 있는 모든 사용자"
  */
 
 // ===== 설정 =====
@@ -23,11 +21,9 @@ const SPREADSHEET_ID = "1V_YTLSziDDVP5DQURLX2Y_AEpqYOotVBqzznu81B3YM";
 const SLACK_WEBHOOK_URL = ""; // 예: https://hooks.slack.com/services/...  (비우면 Slack 생략)
 const RESULT_SHEET = "Results";
 const START_MONEY = 1000000; // 시작 가상 머니 (UI 표시용 동기화)
-const MAX_PLAYERS = 8; // 방 정원 (서버 안정성: Sheets 폴링 부하 고려)
+const MAX_PLAYERS = 8; // 방 정원
 
 // ===== Gemini (AI) =====
-// 키는 코드에 넣지 않고 스크립트 속성(GEMINI_API_KEY)에서 읽음.
-// 프로젝트 설정 > 스크립트 속성 > 속성 GEMINI_API_KEY / 값 AIza... 로 저장.
 const GEMINI_MODEL = "gemini-2.5-flash";
 
 // ===== 웹앱 진입점 =====
@@ -50,11 +46,6 @@ function include(filename) {
 }
 
 // ===== ① 시드 시세 =====
-/**
- * @param {string} category 'kr' | 'us' | 'coin'
- * @param {string} symbol   야후 심볼('000660.KS','AAPL') 또는 코인게코 id('bitcoin')
- * @return {{price:number, source:string}}
- */
 function getSeedPrice(category, symbol) {
   try {
     if (category === "coin") {
@@ -103,7 +94,6 @@ function fallbackPrice_(symbol) {
 }
 
 // 여러 종목 시드 시세를 한 번에 (게임 시작 시 1회)
-// items: [{category, symbol}, ...]  ->  [{symbol, price}, ...]
 function getSeedPrices(items) {
   return items.map(function (it) {
     return {
@@ -115,7 +105,7 @@ function getSeedPrices(items) {
 
 // ===== ② 결과 저장 =====
 /**
- * payload: {nickname,email,mode,symbolLabel,leverage,durationMin,finalReturn,rank,totalPlayers}
+ * payload: {nickname,email,mode,symbolLabel,leverage,durationMin,finalReturn,rank,totalPlayers,gameId}
  * @return {string} 저장된 행의 id
  */
 function saveResult(payload) {
@@ -136,11 +126,13 @@ function saveResult(payload) {
     payload.feedback || "",
     payload.detail || "",
     "PENDING",
+    payload.gameId || "", // 같은 게임(멀티 한 라운드/싱글 한 판)을 묶는 키
+    payload.chartData || "", // 수익률 추이 + 거래 로그 JSON (상세화면 시각화용)
   ]);
   return id;
 }
 
-/** 내 기록 히스토리 (닉네임 기준 최근 20개) */
+/** 내 기록 히스토리 (닉네임 기준 최근 20개) — 구버전 단일 리스트용(현재 미사용, 보존) */
 function getHistory(nickname) {
   var sheet = getResultSheet_();
   var values = sheet.getDataRange().getValues();
@@ -158,6 +150,7 @@ function getHistory(nickname) {
           "MM.dd HH:mm",
         ),
         mode: o.mode,
+        nickname: o.nickname,
         symbol: o.symbolLabel,
         leverage: o.leverage,
         finalReturn: o.finalReturn,
@@ -167,6 +160,75 @@ function getHistory(nickname) {
     }
   }
   return out;
+}
+
+// 기록을 게임 단위로 묶어 반환 (최신 30게임). 한 게임에 참가자 여러 명.
+function getHistoryGames() {
+  var sheet = getResultSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var header = values[0];
+  var tz = Session.getScriptTimeZone();
+  var groups = {},
+    order = [];
+  for (var r = values.length - 1; r >= 1; r--) {
+    // 최신부터
+    var o = rowToObj_(header, values[r]);
+    var key = groupKeyOf_(o, tz);
+    if (!groups[key]) {
+      groups[key] = {
+        mode: o.mode,
+        symbol: o.symbolLabel,
+        leverage: o.leverage,
+        durationMin: o.durationMin,
+        timestamp: o.timestamp,
+        players: [],
+      };
+      order.push(key);
+    }
+    groups[key].players.push({
+      id: o.id,
+      nickname: o.nickname,
+      rank: Number(o.rank),
+      finalReturn: o.finalReturn,
+    });
+  }
+  return order.slice(0, 30).map(function (k) {
+    var g = groups[k];
+    g.players.sort(function (a, b) {
+      return a.rank - b.rank;
+    });
+    return {
+      mode: g.mode,
+      symbol: g.symbol,
+      leverage: g.leverage,
+      durationMin: g.durationMin,
+      date: Utilities.formatDate(new Date(g.timestamp), tz, "MM.dd HH:mm"),
+      count: g.players.length,
+      players: g.players,
+    };
+  });
+}
+
+// 그룹 키: gameId 있으면 그걸로(정확). 없는 옛 멀티 기록은 설정+분 단위로 묶고, 옛 싱글은 각자.
+function groupKeyOf_(o, tz) {
+  if (o.gameId) return "g|" + o.gameId;
+  if (o.mode === "multi") {
+    var min = Utilities.formatDate(new Date(o.timestamp), tz, "yyyyMMddHHmm");
+    return (
+      "m|" +
+      o.symbolLabel +
+      "|" +
+      o.leverage +
+      "|" +
+      o.durationMin +
+      "|" +
+      o.totalPlayers +
+      "|" +
+      min
+    );
+  }
+  return "s|" + o.id;
 }
 
 // 게임 종료 통합: AI 피드백 생성 → 결과+피드백+상세 저장 → 피드백 문자열 반환
@@ -207,6 +269,7 @@ function getGameDetail(id) {
         totalPlayers: o.totalPlayers,
         feedback: o.feedback,
         detail: o.detail,
+        chartData: o.chartData,
       };
     }
   }
@@ -304,7 +367,7 @@ function rowToObj_(header, row) {
   return o;
 }
 
-// ===== 최초 1회 실행 =====
+// ===== 최초 1회 실행 (주의: 기존 데이터 삭제) =====
 function setupSpreadsheet() {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var sheet = ss.getSheetByName(RESULT_SHEET) || ss.insertSheet(RESULT_SHEET);
@@ -324,8 +387,10 @@ function setupSpreadsheet() {
     "feedback",
     "detail",
     "EMAIL_STATUS",
+    "gameId",
+    "chartData",
   ]);
-  sheet.getRange(1, 1, 1, 14).setFontWeight("bold");
+  sheet.getRange(1, 1, 1, 16).setFontWeight("bold");
   sheet.setFrozenRows(1);
 
   // 멀티용 시트
@@ -342,21 +407,35 @@ function setupSpreadsheet() {
     "news",
     "host",
     "createdAt",
+    "round",
   ]);
-  rooms.getRange(1, 1, 1, 10).setFontWeight("bold");
+  rooms.getRange(1, 1, 1, 11).setFontWeight("bold");
   rooms.setFrozenRows(1);
 
   var players = ss.getSheetByName("Players") || ss.insertSheet("Players");
   players.clear();
-  players.appendRow(["roomId", "nick", "ret", "finished", "updatedAt"]);
+  players.appendRow(["roomId", "nick", "state", "finished", "updatedAt"]);
   players.getRange(1, 1, 1, 5).setFontWeight("bold");
   players.setFrozenRows(1);
 
   return sheet;
 }
 
+// 기존 시트에 새 컬럼(gameId, chartData)만 추가 (데이터 보존). 편집기에서 1회 실행.
+function addNewColumns() {
+  var sheet = getResultSheet_();
+  ["gameId", "chartData"].forEach(function (name) {
+    var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (header.indexOf(name) === -1) {
+      sheet
+        .getRange(1, sheet.getLastColumn() + 1)
+        .setValue(name)
+        .setFontWeight("bold");
+    }
+  });
+}
+
 function createEmailTrigger() {
-  // 중복 방지: 기존 동일 트리거 제거 후 재설치
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === "processPendingEmails")
       ScriptApp.deleteTrigger(t);
@@ -368,8 +447,7 @@ function createEmailTrigger() {
 }
 
 // ===== AI: Gemini 호출 =====
-// 키가 없으면 null 반환 → 클라이언트가 로컬 폴백 사용
-function callGemini_(prompt, jsonMode) {
+function callGemini_(prompt, jsonMode, temp) {
   var key =
     PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!key) return null; // 키 없으면 클라이언트가 로컬 폴백 사용
@@ -377,14 +455,14 @@ function callGemini_(prompt, jsonMode) {
     "https://generativelanguage.googleapis.com/v1beta/models/" +
     GEMINI_MODEL +
     ":generateContent";
-  var gen = { temperature: 0.9, maxOutputTokens: 4096 };
+  var gen = { temperature: temp == null ? 0.9 : temp, maxOutputTokens: 4096 };
   if (GEMINI_MODEL.indexOf("gemini-2.") === 0)
-    gen.thinkingConfig = { thinkingBudget: 0 }; // 2.x: 사고 끔 → 빠르고 답이 안 비게
+    gen.thinkingConfig = { thinkingBudget: 0 };
   if (jsonMode) gen.responseMimeType = "application/json";
   var opt = {
     method: "post",
     contentType: "application/json",
-    headers: { "x-goog-api-key": key }, // 키는 헤더로 (URL 노출 방지)
+    headers: { "x-goog-api-key": key },
     payload: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: gen,
@@ -398,7 +476,7 @@ function callGemini_(prompt, jsonMode) {
       if (code === 429 || code >= 500) {
         Utilities.sleep(1500);
         continue;
-      } // 쿼터/일시 오류 → 재시도
+      }
       var data = JSON.parse(res.getContentText());
       var cand = data.candidates && data.candidates[0];
       if (cand && cand.content && cand.content.parts) {
@@ -419,7 +497,6 @@ function callGemini_(prompt, jsonMode) {
 }
 
 // 시작 시: 시황 브리핑 + 종목별 속보 헤드라인 생성
-// items: [{label, dir}]  (dir 1=호재, -1=악재)  ->  {brief, heads:[...]} | null
 function aiMarketNews(category, items) {
   var lines = items
     .map(function (it, i) {
@@ -444,24 +521,24 @@ function aiMarketNews(category, items) {
   }
 }
 
-// 종료 시: 거래 기록 기반 피드백 (지어내지 말고 기록만 근거)
+// 종료 시: 거래 기록 기반 피드백 (사실은 지어내지 않되, 해석·개선 조언은 적극적으로)
 function aiFeedback(summary, nickname) {
   var who = nickname || "플레이어";
   var prompt =
-    "너는 트레이딩 코치다. 아래는 가상 주식 게임 한 판의 플레이어 거래 기록과 결과다.\n" +
-    '맨 처음에 "' +
+    "너는 트레이딩 코치다. 아래 한 판의 거래 기록과 결과를 근거로, 다음 판에 더 잘하도록 돕는 피드백을 써라.\n" +
+    '맨 앞을 "' +
     who +
-    '님,"으로 부르며 시작해라.\n' +
-    "기록에 있는 행동만 근거로, 잘한 점과 아쉬운 점을 합쳐 3~4문장으로 간결하게 평가해라.\n" +
-    "기록에 없는 내용은 절대 지어내지 마라. 친근한 존댓말 톤. 마크다운 기호(*, #, 굵게 등) 쓰지 말고 평문으로.\n\n" +
+    '님,"으로 시작.\n' +
+    "규칙:\n" +
+    "1) [사실] 거래내역·뉴스·결과에 실제로 적힌 것만 인용하라. 기록에 없는 행동(손절, 추가매수, 하지 않은 거래)이나 감정(당황·욕심 등)은 절대 지어내지 마라.\n" +
+    "2) [해석] 사실을 나열만 하지 말고, 그 결정들이 결과(수익률·순위·청산 여부)로 어떻게 이어졌는지 가장 핵심적인 원인 1가지를 짚어라. 예: 레버리지 상향 타이밍, 뉴스 방향과 매매의 엇갈림, 종목 갈아타기, 손실 구간에서 포지션 유지.\n" +
+    '3) [조언] 다음 판에 바로 적용할 구체적 개선점을 1가지만 제시하라. "힘내세요" 같은 추상적 격려 말고, 행동 단위로.\n' +
+    "4) 3~4문장, 존댓말 평문, 마크다운(*, # 등) 금지. 담백하되 알맹이 있게.\n\n" +
     summary;
-  return callGemini_(prompt, false); // 문자열 or null
+  return callGemini_(prompt, false, 0.5); // 사실 고정 + 해석 여지
 }
 
-// ===================== 멀티플레이 (Step A: 서버 토대) =====================
-// 동기화 전략: 가격/뉴스/봇은 시드로 전원 동일하게 계산(클라이언트). 서버는 방 메타와
-// 각 플레이어의 수익률 한 줄만 주고받음 → Sheets 부담 최소화.
-
+// ===================== 멀티플레이 =====================
 function genRoomCode_() {
   var c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
     s = "";
@@ -477,7 +554,7 @@ function createRoom(opts) {
   var players = ss.getSheetByName("Players");
   var roomId = genRoomCode_();
   var seed = Math.floor(Math.random() * 0x7fffffff);
-  var news = aiRoomNews_(opts.category, opts.labels || []); // {종목:{pos,neg}} (키 없으면 {})
+  var news = aiRoomNews_(opts.category, opts.labels || []);
   rooms.appendRow([
     roomId,
     seed,
@@ -489,8 +566,9 @@ function createRoom(opts) {
     JSON.stringify(news || {}),
     opts.host || "방장",
     new Date(),
+    0,
   ]);
-  players.appendRow([roomId, opts.host || "방장", 0, false, new Date()]);
+  players.appendRow([roomId, opts.host || "방장", "", false, new Date()]);
   var url = "";
   try {
     url = ScriptApp.getService().getUrl() + "?room=" + roomId;
@@ -510,12 +588,30 @@ function joinRoom(roomId, nick) {
   for (var r = 1; r < vals.length; r++) {
     if (String(vals[r][0]) === String(roomId)) {
       count++;
-      if (String(vals[r][1]) === String(nick)) return { error: "NICK_TAKEN" }; // 같은 방 닉 중복 금지
+      if (String(vals[r][1]) === String(nick)) return { error: "NICK_TAKEN" };
     }
   }
   if (count >= MAX_PLAYERS) return { error: "ROOM_FULL" };
-  players.appendRow([roomId, nick, 0, false, new Date()]);
+  players.appendRow([roomId, nick, "", false, new Date()]);
   return roomBasic_(room);
+}
+
+// 방 나가기: 해당 플레이어 행 제거 (다시하기 안 누르고 홈으로/나가기 시 진짜 나감)
+function leaveRoom(roomId, nick) {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var players = ss.getSheetByName("Players");
+  if (!players) return { ok: false };
+  var vals = players.getDataRange().getValues();
+  // 아래에서 위로 삭제해야 인덱스가 안 밀림(중복 행 대비)
+  for (var r = vals.length - 1; r >= 1; r--) {
+    if (
+      String(vals[r][0]) === String(roomId) &&
+      String(vals[r][1]) === String(nick)
+    ) {
+      players.deleteRow(r + 1);
+    }
+  }
+  return { ok: true };
 }
 
 // 대기실/게임 상태 조회 (폴링용)
@@ -538,7 +634,7 @@ function getLobby(roomId) {
   };
 }
 
-// 게임 시작 (방장) → 4초 뒤 동시 시작 시각 설정
+// 게임 시작/재시작 (방장) → 새 시드·새 시작시각·플레이어 리셋
 function startRoom(roomId) {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var rooms = ss.getSheetByName("Rooms");
@@ -546,20 +642,32 @@ function startRoom(roomId) {
   var h = vals[0];
   var sc = h.indexOf("status"),
     tc = h.indexOf("startTime"),
-    ic = h.indexOf("roomId");
+    ic = h.indexOf("roomId"),
+    seedc = h.indexOf("seed");
   for (var r = 1; r < vals.length; r++) {
     if (String(vals[r][ic]) === String(roomId)) {
-      var st = new Date(Date.now() + 6000);
+      var st = new Date(Date.now() + 2500);
+      var newSeed = Math.floor(Math.random() * 0x7fffffff);
       rooms.getRange(r + 1, sc + 1).setValue("playing");
       rooms.getRange(r + 1, tc + 1).setValue(st);
-      return { startTime: st.getTime() };
+      if (seedc >= 0) rooms.getRange(r + 1, seedc + 1).setValue(newSeed);
+      resetRoomPlayers_(ss, roomId);
+      return { startTime: st.getTime(), seed: newSeed };
     }
   }
   return { error: "NOT_FOUND" };
 }
+function resetRoomPlayers_(ss, roomId) {
+  var players = ss.getSheetByName("Players");
+  var vals = players.getDataRange().getValues();
+  for (var r = 1; r < vals.length; r++) {
+    if (String(vals[r][0]) === String(roomId))
+      players.getRange(r + 1, 3, 1, 3).setValues([["", false, new Date()]]);
+  }
+}
 
-// 내 수익률 갱신 + 전체 순위 반환 (게임 중 폴링)
-function updatePlayer(roomId, nick, ret, finished) {
+// 내 포지션 상태 갱신 + 전체 명단 반환
+function updatePlayer(roomId, nick, state, finished) {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var players = ss.getSheetByName("Players");
   var vals = players.getDataRange().getValues();
@@ -568,7 +676,9 @@ function updatePlayer(roomId, nick, ret, finished) {
       String(vals[r][0]) === String(roomId) &&
       String(vals[r][1]) === String(nick)
     ) {
-      players.getRange(r + 1, 3, 1, 3).setValues([[ret, finished, new Date()]]);
+      players
+        .getRange(r + 1, 3, 1, 3)
+        .setValues([[state, finished, new Date()]]);
       break;
     }
   }
@@ -579,27 +689,33 @@ function getRoomPlayers(roomId) {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var players = ss.getSheetByName("Players");
   var vals = players.getDataRange().getValues();
-  var map = {}; // nick -> {nick, ret, finished, t}  (혹시 모를 중복 행은 최신 것만)
+  var map = {};
   for (var r = 1; r < vals.length; r++) {
     if (String(vals[r][0]) !== String(roomId)) continue;
     var nick = String(vals[r][1]);
     var t = vals[r][4] ? new Date(vals[r][4]).getTime() : 0;
     if (!map[nick] || t >= map[nick].t) {
+      var st = null;
+      try {
+        if (vals[r][2]) st = JSON.parse(vals[r][2]);
+      } catch (e) {
+        st = null;
+      }
       map[nick] = {
         nick: nick,
-        ret: Number(vals[r][2]),
+        state: st,
         finished: vals[r][3] === true || vals[r][3] === "true",
         t: t,
       };
     }
   }
-  var out = Object.keys(map).map(function (k) {
-    return { nick: map[k].nick, ret: map[k].ret, finished: map[k].finished };
+  return Object.keys(map).map(function (k) {
+    return {
+      nick: map[k].nick,
+      state: map[k].state,
+      finished: map[k].finished,
+    };
   });
-  out.sort(function (a, b) {
-    return b.ret - a.ret;
-  });
-  return out;
 }
 
 function findRoom_(ss, roomId) {
@@ -634,7 +750,7 @@ function inviteUrl_(roomId) {
   }
 }
 
-// 방 전용 AI 뉴스 템플릿 (종목별 호재/악재 1개씩) — 1회 생성해 전원이 시드로 동일하게 사용
+// 방 전용 AI 뉴스 템플릿 (종목별 호재/악재 1개씩)
 function aiRoomNews_(category, labels) {
   if (!labels || !labels.length) return {};
   var prompt =
