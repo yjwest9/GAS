@@ -41,25 +41,10 @@
           <p class="home-tagline">가상 머니로 친구와 단판 승부</p>
         </div>
 
-        <div class="card">
-          <div class="how-row">
-            <span class="how-ic">📈</span>
-            <div>
-              <b>종목 골라 단타</b><span>실시간 차트 보고 매수·매도</span>
-            </div>
-          </div>
-          <div class="how-row">
-            <span class="how-ic">⚡</span>
-            <div>
-              <b>레버리지로 짜릿하게</b><span>최대 10배, 청산 주의</span>
-            </div>
-          </div>
-          <div class="how-row">
-            <span class="how-ic">🤖</span>
-            <div>
-              <b>AI 시황 &amp; 피드백</b><span>속보 생성 + 거래 분석</span>
-            </div>
-          </div>
+        <!-- 게임방법/최근기록 2열 버튼 -->
+        <div class="home-btn-row">
+          <button id="home-howto" class="home-info-btn">❓ 게임 방법</button>
+          <button id="home-history" class="home-info-btn">📋 최근 기록</button>
         </div>
 
         <button id="home-single" class="mode-card single">
@@ -70,11 +55,6 @@
           <div class="mode-title">멀티 모드</div>
           <div class="mode-sub">친구와 실시간 대결 · 링크로 초대</div>
         </button>
-
-        <button id="home-history" class="btn-text">
-          📋 최근 게임 기록 보기
-        </button>
-        <button id="home-join" class="btn-text">🔑 코드로 입장</button>
 
         <div class="disclaimer">
           이 게임은 가상 머니를 사용하며 실제 투자와 무관합니다. 교육 및 오락
@@ -156,9 +136,30 @@
         <button id="btn-start" class="btn-primary btn-block">게임 시작</button>
       </section>
 
+      <!-- ===================== 멀티 메뉴 (방 만들기 / 코드 입장 선택) ===================== -->
+      <section id="screen-multi-menu" class="screen">
+        <button id="mm-back" class="back">← 홈</button>
+        <header class="brand">
+          <div class="brand-mark">SB</div>
+          <div>
+            <h1 class="brand-name">멀티 모드</h1>
+            <p class="brand-sub">방을 만들거나 친구 방에 입장해요</p>
+          </div>
+        </header>
+
+        <button id="mm-create" class="mode-card single">
+          <div class="mode-title">방 만들기</div>
+          <div class="mode-sub">새 방을 만들고 친구를 초대해요</div>
+        </button>
+        <button id="mm-join" class="mode-card">
+          <div class="mode-title">코드로 입장</div>
+          <div class="mode-sub">초대받은 방 코드로 들어가요</div>
+        </button>
+      </section>
+
       <!-- ===================== 방 만들기 (멀티) ===================== -->
       <section id="screen-multi-setup" class="screen">
-        <button id="ms-back" class="back">← 홈</button>
+        <button id="ms-back" class="back">← 나가기</button>
         <header class="brand">
           <div class="brand-mark">SB</div>
           <div>
@@ -179,6 +180,16 @@
             placeholder="닉네임 입력"
           />
           <div class="err" id="mn-err"></div>
+
+          <label class="field-label"
+            >이메일 <span class="muted">(결과 받기 · 선택)</span></label
+          >
+          <input
+            id="mn-email"
+            class="text-input"
+            type="email"
+            placeholder="example@email.com"
+          />
         </div>
 
         <div class="card">
@@ -215,7 +226,7 @@
 
       <!-- ===================== 입장 (초대 링크) ===================== -->
       <section id="screen-join" class="screen">
-        <button id="join-back" class="back">← 홈</button>
+        <button id="join-back" class="back">← 나가기</button>
         <header class="brand">
           <div class="brand-mark">SB</div>
           <div>
@@ -250,6 +261,16 @@
             placeholder="닉네임 입력"
           />
           <div class="err" id="j-err"></div>
+
+          <label class="field-label"
+            >이메일 <span class="muted">(결과 받기 · 선택)</span></label
+          >
+          <input
+            id="j-email"
+            class="text-input"
+            type="email"
+            placeholder="example@email.com"
+          />
         </div>
 
         <button id="btn-join" class="btn-primary btn-block">입장하기</button>
@@ -257,7 +278,20 @@
 
       <!-- ===================== 대기실 ===================== -->
       <section id="screen-lobby" class="screen">
-        <button id="lobby-leave" class="back">← 나가기</button>
+        <div class="top-bar">
+          <button id="lobby-leave" class="back" style="margin: 0">
+            ← 나가기
+          </button>
+          <button
+            id="lobby-theme-switch"
+            class="theme-switch"
+            type="button"
+            aria-label="다크모드 전환"
+          >
+            <span class="ts-label">다크모드</span>
+            <span class="ts-track"><span class="ts-thumb"></span></span>
+          </button>
+        </div>
         <div class="lobby-hero">
           <p class="lobby-label">방 코드</p>
           <div class="room-code" id="l-code">-----</div>
@@ -281,6 +315,13 @@
         <div class="card lobby-info" id="l-info"></div>
 
         <button
+          id="btn-lobby-settings"
+          class="btn-secondary btn-block"
+          style="display: none; margin-bottom: 10px"
+        >
+          ⚙️ 게임 조건 변경
+        </button>
+        <button
           id="btn-startroom"
           class="btn-primary btn-block"
           style="display: none"
@@ -294,59 +335,70 @@
 
       <!-- ===================== 게임 (P4) ===================== -->
       <section id="screen-game" class="screen">
-        <header class="game-top">
-          <div class="ticker">
-            <span class="ticker-label">StockBattle</span
-            ><span class="badge" id="g-source">live</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 10px">
-            <button id="g-mute" class="mute-btn" title="소리 켜기/끄기">
-              🔊
-            </button>
-            <div class="timer" id="g-timer">03:00</div>
-          </div>
-        </header>
-
-        <div class="brief" id="g-brief"></div>
-
-        <div class="card stat-card">
-          <div class="stat-row">
-            <div>
-              <div class="stat-label">내 수익률</div>
-              <div class="stat-return" id="g-return">+0.00%</div>
-              <div class="stat-sub" id="g-equity">1,000,000원</div>
+        <!-- 고정 상단: 타이머 + 수익률 카드 -->
+        <div class="game-sticky-top">
+          <header class="game-top">
+            <div class="ticker">
+              <span class="ticker-label">StockBattle</span
+              ><span class="badge" id="g-source">live</span>
             </div>
-            <div class="lev-tag" id="g-lev">1배</div>
-          </div>
-          <div class="pos-state" id="g-position">현금 보유 중</div>
-        </div>
-
-        <div class="watchlist" id="g-watch"></div>
-
-        <div class="charts">
-          <div class="card chart-card">
-            <div class="chart-head">
-              <span class="chart-name" id="cA-name">-</span
-              ><span class="chart-price" id="cA-price">0</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <button id="g-mute" class="mute-btn" title="소리 켜기/끄기">
+                🔊
+              </button>
+              <div class="timer" id="g-timer">03:00</div>
             </div>
-            <div class="chart-wrap"><canvas id="chartA"></canvas></div>
-            <button class="btn-buy sm" id="cA-buy">매수</button>
-          </div>
-          <div class="card chart-card">
-            <div class="chart-head">
-              <span class="chart-name" id="cB-name">-</span
-              ><span class="chart-price" id="cB-price">0</span>
+          </header>
+
+          <div class="card stat-card">
+            <div class="stat-row">
+              <div>
+                <div class="stat-label">내 수익률</div>
+                <div class="stat-return" id="g-return">+0.00%</div>
+                <div class="stat-sub" id="g-equity">1,000,000원</div>
+              </div>
+              <div class="lev-tag" id="g-lev">1배</div>
             </div>
-            <div class="chart-wrap"><canvas id="chartB"></canvas></div>
-            <button class="btn-buy sm" id="cB-buy">매수</button>
+            <div class="pos-state" id="g-position">현금 보유 중</div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="stat-label">
-            실시간 순위 <span class="muted">· 수익률은 끝나면 공개</span>
+        <!-- 스크롤 영역 -->
+        <div class="game-scroll">
+          <button id="liq-exit" class="btn-liq-exit" style="display: none">
+            💀 청산됨 · 결과 보기 →
+          </button>
+
+          <div class="brief" id="g-brief"></div>
+
+          <div class="watchlist" id="g-watch"></div>
+
+          <div class="charts">
+            <div class="card chart-card">
+              <div class="chart-head">
+                <span class="chart-name" id="cA-name">-</span
+                ><span class="chart-price" id="cA-price">0</span>
+              </div>
+              <div class="chart-wrap"><canvas id="chartA"></canvas></div>
+              <button class="btn-buy sm" id="cA-buy">매수</button>
+            </div>
+            <div class="card chart-card">
+              <div class="chart-head">
+                <span class="chart-name" id="cB-name">-</span
+                ><span class="chart-price" id="cB-price">0</span>
+              </div>
+              <div class="chart-wrap"><canvas id="chartB"></canvas></div>
+              <button class="btn-buy sm" id="cB-buy">매수</button>
+            </div>
           </div>
-          <ul class="rank-list" id="g-rank"></ul>
+
+          <div class="card">
+            <div class="stat-label">
+              실시간 순위
+              <span class="muted" id="g-rank-hint">· 막판에 수익률 공개</span>
+            </div>
+            <ul class="rank-list" id="g-rank"></ul>
+          </div>
         </div>
 
         <div class="action-bar">
@@ -364,21 +416,34 @@
           <div class="result-sub" id="r-equity">1,000,000원</div>
         </div>
 
-        <!-- AI 분석: 우리 웹의 강점 → 시각적으로 강조 -->
-        <div class="ai-card">
-          <div class="ai-card-head">
-            <span class="ai-badge">AI</span><span>트레이딩 분석</span>
-          </div>
-          <div class="ai-feedback" id="r-ai">분석 준비 중...</div>
-        </div>
-
         <div class="card">
           <div class="stat-label">최종 순위</div>
           <ul class="rank-list reveal" id="r-rank-list"></ul>
         </div>
 
-        <p class="email-note" id="r-email-note"></p>
+        <!-- AI분석 / 거래내역 2탭 -->
+        <div class="tabs" id="r-tabs">
+          <button class="tab-btn active" data-tab="ai">🤖 AI 분석</button>
+          <button class="tab-btn" data-tab="trade">📋 거래 내역</button>
+        </div>
 
+        <div class="tab-panel active" data-panel="ai">
+          <div class="ai-card" style="margin-top: 12px">
+            <div class="ai-card-head">
+              <span class="ai-badge">AI</span><span>트레이딩 분석</span>
+            </div>
+            <div class="ai-feedback" id="r-ai">분석 준비 중...</div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="trade" style="display: none">
+          <div class="card" style="margin-top: 12px">
+            <div class="stat-label">거래 내역</div>
+            <div class="trade-timeline" id="r-trade"></div>
+          </div>
+        </div>
+
+        <p class="email-note" id="r-email-note"></p>
         <button id="btn-copy" class="btn-copy">결과 복사</button>
         <button id="btn-again" class="btn-primary btn-block">다시 하기</button>
         <button id="btn-home" class="btn-secondary btn-block">홈으로</button>
@@ -421,23 +486,37 @@
           <div class="hist-meta" id="d-meta"></div>
         </div>
 
-        <div class="ai-card">
-          <div class="ai-card-head">
-            <span class="ai-badge">AI</span><span>트레이딩 분석</span>
-          </div>
-          <div class="ai-feedback" id="d-ai">불러오는 중...</div>
+        <!-- 3탭 -->
+        <div class="tabs" id="d-tabs">
+          <button class="tab-btn active" data-tab="ai">🤖 AI 분석</button>
+          <button class="tab-btn" data-tab="chart">📈 수익률 추이</button>
+          <button class="tab-btn" data-tab="trade">📋 거래 내역</button>
         </div>
 
-        <div class="card" id="d-chart-card">
-          <div class="stat-label">
-            수익률 추이 <span class="muted">· 게임 진행에 따른 내 수익률</span>
+        <div class="tab-panel active" data-panel="ai">
+          <div class="ai-card" style="margin-top: 12px">
+            <div class="ai-card-head">
+              <span class="ai-badge">AI</span><span>트레이딩 분석</span>
+            </div>
+            <div class="ai-feedback" id="d-ai">불러오는 중...</div>
           </div>
-          <div class="detail-chart-wrap"><canvas id="d-chart"></canvas></div>
         </div>
 
-        <div class="card">
-          <div class="stat-label">거래 내역</div>
-          <div class="trade-timeline" id="d-detail"></div>
+        <div class="tab-panel" data-panel="chart" style="display: none">
+          <div class="card" id="d-chart-card" style="margin-top: 12px">
+            <div class="stat-label">
+              수익률 추이
+              <span class="muted">· 게임 진행에 따른 내 수익률</span>
+            </div>
+            <div class="detail-chart-wrap"><canvas id="d-chart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="trade" style="display: none">
+          <div class="card" style="margin-top: 12px">
+            <div class="stat-label">거래 내역</div>
+            <div class="trade-timeline" id="d-detail"></div>
+          </div>
         </div>
       </section>
 
@@ -449,6 +528,86 @@
       </div>
       <div id="countdown" class="countdown">
         <div id="cd-num" class="countdown-num">3</div>
+      </div>
+
+      <!-- 게임 방법 모달 -->
+      <div id="how-modal" class="modal-overlay" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <div class="modal-head">
+            <span class="modal-title">게임 방법</span>
+            <button id="how-close" class="modal-close" aria-label="닫기">
+              ✕
+            </button>
+          </div>
+          <div class="how-row">
+            <span class="how-ic">📈</span>
+            <div>
+              <b>종목 골라 단타</b><span>실시간 차트 보고 매수·매도</span>
+            </div>
+          </div>
+          <div class="how-row">
+            <span class="how-ic">⚡</span>
+            <div>
+              <b>레버리지로 짜릿하게</b><span>최대 10배, 청산 주의</span>
+            </div>
+          </div>
+          <div class="how-row">
+            <span class="how-ic">🤖</span>
+            <div>
+              <b>AI 시황 &amp; 피드백</b><span>속보 생성 + 거래 분석</span>
+            </div>
+          </div>
+          <div class="how-row">
+            <span class="how-ic">💰</span>
+            <div>
+              <b>수수료 0.1%</b><span>매수·매도 양방향, 잦은 거래 주의</span>
+            </div>
+          </div>
+          <div class="how-row">
+            <span class="how-ic">🏆</span>
+            <div>
+              <b>순위는 막판 공개</b><span>1분 게임=30초 전, 3분+= 1분 전</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 대기실 조건 변경 모달 (방장 전용) -->
+      <div
+        id="lobby-settings-modal"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="modal-card">
+          <div class="modal-head">
+            <span class="modal-title">⚙️ 게임 조건 변경</span>
+            <button id="ls-close" class="modal-close" aria-label="닫기">
+              ✕
+            </button>
+          </div>
+          <label class="field-label">시장</label>
+          <div class="seg" id="ls-seg-category" style="margin-bottom: 18px">
+            <button class="seg-btn active" data-cat="kr">국내주</button>
+            <button class="seg-btn" data-cat="us">해외주</button>
+            <button class="seg-btn" data-cat="coin">코인</button>
+          </div>
+          <label class="field-label">시작 레버리지</label>
+          <div class="seg" id="ls-seg-leverage" style="margin-bottom: 18px">
+            <button class="seg-btn active" data-lev="1">1배</button>
+            <button class="seg-btn" data-lev="2">2배</button>
+            <button class="seg-btn" data-lev="5">5배</button>
+            <button class="seg-btn" data-lev="10">10배</button>
+          </div>
+          <label class="field-label">게임 시간</label>
+          <div class="seg" id="ls-seg-duration" style="margin-bottom: 22px">
+            <button class="seg-btn" data-min="1">1분</button>
+            <button class="seg-btn active" data-min="3">3분</button>
+            <button class="seg-btn" data-min="5">5분</button>
+            <button class="seg-btn" data-min="8">8분</button>
+          </div>
+          <button id="btn-ls-apply" class="btn-primary btn-block">적용</button>
+        </div>
       </div>
     </div>
 

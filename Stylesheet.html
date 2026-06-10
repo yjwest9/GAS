@@ -24,7 +24,7 @@
   }
   html,
   body {
-    overflow-x: hidden;
+    overflow-x: auto;
     background: var(--bg);
   }
   body {
@@ -38,9 +38,11 @@
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
   }
+  /* 최소 너비 고정: 이 아래로는 레이아웃을 짓누르지 않고 가로 스크롤 허용 (모바일 실기기는 360+라 영향 없음) */
   .app {
     max-width: 1280px;
     width: 100%;
+    min-width: 360px;
     margin: 0 auto;
     padding: 20px 16px 120px;
     position: relative;
@@ -338,6 +340,23 @@
   .timer.urgent {
     color: var(--up);
   }
+  .btn-liq-exit {
+    display: block;
+    width: 100%;
+    background: #191f28;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 13px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    margin: 0 0 14px;
+  }
+  .btn-liq-exit:active {
+    opacity: 0.85;
+  }
 
   /* 시황 브리핑 배너 */
   .brief {
@@ -540,7 +559,7 @@
 
   /* 액션바 */
   .action-bar {
-    position: fixed;
+    position: sticky;
     left: 0;
     right: 0;
     bottom: 0;
@@ -722,6 +741,59 @@
     }
   }
 
+  /* === AI 피드백 구조화 (라벨 칩 + 본문) === */
+  .fb-intro {
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--text);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .fb-block {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 0;
+  }
+  .fb-block + .fb-block {
+    border-top: 1px solid rgba(124, 92, 255, 0.14);
+  }
+  .fb-tag {
+    flex: none;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 4px 10px;
+    border-radius: 8px;
+    margin-top: 1px;
+    letter-spacing: 0.3px;
+  }
+  .fb-fact {
+    background: #e7f0ff;
+    color: var(--blue-dark);
+  }
+  .fb-read {
+    background: #efe9ff;
+    color: #6b4fd8;
+  }
+  .fb-tip {
+    background: #e3f8ee;
+    color: #1a8d5f;
+  }
+  .fb-body {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .fb-line {
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--text);
+    font-weight: 500;
+  }
+
   /* === 수익률 추이 차트 (상세) === */
   .detail-chart-wrap {
     height: 180px;
@@ -802,9 +874,9 @@
   .detail-pre {
     white-space: pre-wrap;
     word-break: break-word;
-    font-size: 12.5px;
-    color: var(--text2);
-    line-height: 1.65;
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.7;
     margin-top: 10px;
     font-family: "Pretendard", sans-serif;
   }
@@ -968,8 +1040,11 @@
     .app {
       padding-bottom: 40px;
     }
+    .game-sticky-top {
+      position: static;
+    } /* PC는 스크롤 충분해서 sticky 불필요 */
   }
-  /* 초소형 (가로 스크롤/잘림 없이 같이 줄어들게) */
+  /* 초소형 (최소 360px까지만 대응 — 그 아래는 가로 스크롤로 레이아웃 보존) */
   @media (max-width: 380px) {
     .seg-btn {
       font-size: 13px;
@@ -985,32 +1060,138 @@
       grid-template-columns: 1fr;
     }
   }
-  @media (max-width: 340px) {
-    .app {
-      padding: 16px 10px 110px;
+  /* 모바일: 게임화면을 뷰포트에 가두고 flex로 배분 */
+  @media (max-width: 768px) {
+    /* 게임화면 활성화 시 body/app 스크롤 차단 */
+    body.in-game {
+      overflow: hidden;
+      height: 100dvh;
     }
-    .room-code {
-      font-size: 26px;
-      letter-spacing: 3px;
-      padding: 14px;
+    body.in-game .app {
+      height: 100dvh;
+      overflow: hidden;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
     }
-    input.code-input {
-      font-size: 20px;
-      letter-spacing: 3px;
-      padding: 14px;
+    body.in-game #screen-game {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+      padding: 0;
     }
-    .seg-btn {
+    body.in-game .game-sticky-top {
+      flex: 0 0 auto;
+      padding: 8px 16px 6px;
+      position: static;
+    }
+    body.in-game .game-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 16px 4px;
+    }
+    body.in-game .action-bar {
+      flex: 0 0 auto;
+      position: static;
+      background: rgba(255, 255, 255, 0.96);
+      border-top: 1px solid var(--line);
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      margin: 0;
+      max-width: none;
+      backdrop-filter: blur(8px);
+    }
+    /* 다크모드 action-bar */
+    [data-theme="dark"] body.in-game .action-bar {
+      background: rgba(23, 23, 28, 0.97);
+    }
+    /* 차트 2열 + 높이 축소 */
+    body.in-game .charts {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    body.in-game .chart-wrap {
+      height: 90px;
+      margin: 6px 0 8px;
+    }
+    body.in-game .chart-card {
+      padding: 10px;
+    }
+    body.in-game .chart-name {
+      font-size: 13px;
+    }
+    body.in-game .chart-price {
       font-size: 12px;
-      padding: 10px 0;
     }
-    .result-return {
-      font-size: 36px;
+    body.in-game .btn-buy.sm {
+      padding: 9px;
+      font-size: 14px;
     }
-    .home-title {
+    /* 브리핑 1줄 말줄임 */
+    body.in-game .brief {
+      display: none;
+    }
+    /* 워치리스트 압축 */
+    body.in-game .watchlist {
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    body.in-game .watch-item {
+      padding: 8px 10px;
+    }
+    body.in-game .watch-name {
+      font-size: 12px;
+    }
+    body.in-game .watch-chg {
+      font-size: 12px;
+    }
+    /* 수익률 카드 압축 */
+    body.in-game .stat-card {
+      padding: 12px 14px;
+      margin-bottom: 6px;
+    }
+    body.in-game .stat-return {
       font-size: 26px;
+      margin: 4px 0 2px;
     }
-    .ai-feedback {
-      font-size: 14.5px;
+    body.in-game .stat-sub {
+      font-size: 13px;
+    }
+    body.in-game .pos-state {
+      margin-top: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+    }
+    /* 타이머/상단바 압축 */
+    body.in-game .game-top {
+      margin: 0 0 6px;
+    }
+    body.in-game .ticker-label {
+      font-size: 16px;
+    }
+    body.in-game .timer {
+      font-size: 19px;
+    }
+    /* 순위 압축 */
+    body.in-game .rank-row {
+      padding: 8px 10px;
+    }
+    body.in-game .rank-name {
+      font-size: 13px;
+    }
+    body.in-game .card {
+      padding: 14px;
+      margin-bottom: 8px;
+    }
+    /* 청산 버튼 */
+    body.in-game .btn-liq-exit {
+      margin-bottom: 8px;
+      padding: 10px;
+    }
+    /* game-scroll 내 마지막 card margin 제거 */
+    body.in-game .game-scroll .card:last-child {
+      margin-bottom: 0;
     }
   }
 
@@ -1034,6 +1215,128 @@
     font-size: 14px;
     color: var(--text3);
     margin-top: 6px;
+  }
+
+  /* E: 홈 2열 버튼 */
+  .home-btn-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .home-info-btn {
+    flex: 1;
+    padding: 14px 10px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--text2);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: var(--shadow);
+    transition: 0.12s;
+  }
+  .home-info-btn:active {
+    background: var(--bg);
+  }
+
+  /* E: 게임방법 모달 */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.55);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+  }
+  .modal-overlay.show {
+    display: flex;
+    animation: fade 0.2s ease;
+  }
+  .modal-card {
+    width: 100%;
+    max-width: 500px;
+    background: var(--surface);
+    border-radius: 24px 24px 0 0;
+    padding: 20px 20px 32px;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
+  }
+  @media (min-width: 520px) {
+    .modal-overlay {
+      align-items: center;
+      padding: 20px;
+    }
+    .modal-card {
+      border-radius: var(--radius);
+      max-width: 440px;
+    }
+  }
+  .modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .modal-title {
+    font-size: 17px;
+    font-weight: 800;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 18px;
+    color: var(--text3);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 8px;
+    line-height: 1;
+  }
+  .modal-close:active {
+    background: var(--bg);
+  }
+
+  /* I: 게임화면 sticky-top */
+  .game-sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    background: var(--bg);
+    padding-bottom: 2px;
+  }
+  .game-scroll {
+  } /* 일반 흐름 */
+
+  /* F+G: 탭 공용 */
+  .tabs {
+    display: flex;
+    border-bottom: 1.5px solid var(--line);
+    margin-bottom: 0;
+    gap: 0;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 11px 4px;
+    background: none;
+    border: none;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text3);
+    cursor: pointer;
+    font-family: inherit;
+    border-bottom: 2.5px solid transparent;
+    margin-bottom: -1.5px;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+  .tab-btn.active {
+    color: var(--blue);
+    border-bottom-color: var(--blue);
+  }
+  .tab-panel {
   }
   .how-row {
     display: flex;
@@ -1087,6 +1390,7 @@
   .mode-title {
     font-size: 18px;
     font-weight: 800;
+    color: var(--text);
   }
   .mode-sub {
     font-size: 13px;
@@ -1095,16 +1399,19 @@
   }
   .btn-text {
     display: block;
-    width: 100%;
+    margin: 0 auto 6px;
     background: none;
     border: none;
     color: var(--text2);
     font-size: 14px;
     font-weight: 600;
-    padding: 14px;
+    padding: 14px 18px;
     cursor: pointer;
     font-family: inherit;
-    margin-bottom: 6px;
+    border-radius: 12px;
+  }
+  .btn-text:hover {
+    background: var(--bg);
   }
 
   /* ===== 뒤로 / 기록 ===== */
@@ -1358,6 +1665,9 @@
     --ai: #9d86ff;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.45);
   }
+  [data-theme="dark"] .btn-liq-exit {
+    background: #000;
+  }
   [data-theme="dark"] .text-input {
     background: #16161a;
     border-color: #2d2d35;
@@ -1428,7 +1738,7 @@
   }
   [data-theme="dark"] .pos-state {
     background: #16161a;
-    color: var(--text3);
+    color: var(--text2);
   }
   [data-theme="dark"] .watch-item.held {
     background: #16213a;
@@ -1438,10 +1748,6 @@
   }
   [data-theme="dark"] .rank-row.me {
     background: #16213a;
-  }
-  [data-theme="dark"] .action-bar {
-    background: rgba(23, 23, 28, 0.92);
-    border-top-color: #2d2d35;
   }
   [data-theme="dark"] .result-rank {
     background: #16213a;
@@ -1458,6 +1764,21 @@
   }
   [data-theme="dark"] .ai-card-head {
     color: #9cc2ff;
+  }
+  [data-theme="dark"] .fb-fact {
+    background: #16213a;
+    color: #9cc2ff;
+  }
+  [data-theme="dark"] .fb-read {
+    background: #241b3a;
+    color: #c0acff;
+  }
+  [data-theme="dark"] .fb-tip {
+    background: #13312a;
+    color: #5fd6a0;
+  }
+  [data-theme="dark"] .fb-block + .fb-block {
+    border-top-color: rgba(157, 134, 255, 0.18);
   }
   [data-theme="dark"] .tl-row {
     background: #16161a;
@@ -1500,5 +1821,37 @@
   [data-theme="dark"] .mode-badge.multi {
     background: #16213a;
     color: #9cc2ff;
+  }
+  /* 멀티(일반) 모드 카드: 다크에서 제목/부제 가시성 확보 (single 아닌 카드) */
+  [data-theme="dark"] .mode-card:not(.single) {
+    background: var(--surface);
+    border-color: var(--line);
+  }
+  [data-theme="dark"] .mode-card:not(.single) .mode-title {
+    color: var(--text);
+  }
+  [data-theme="dark"] .mode-card:not(.single) .mode-sub {
+    color: var(--text3);
+  }
+  [data-theme="dark"] .home-info-btn {
+    background: var(--surface);
+    border-color: var(--line);
+    color: var(--text2);
+  }
+  [data-theme="dark"] .home-info-btn:active {
+    background: var(--bg);
+  }
+  [data-theme="dark"] .modal-card {
+    background: var(--surface);
+  }
+  [data-theme="dark"] .modal-overlay {
+    background: rgba(0, 0, 0, 0.72);
+  }
+  [data-theme="dark"] .game-sticky-top {
+    background: var(--bg);
+  }
+  [data-theme="dark"] .action-bar {
+    background: rgba(23, 23, 28, 0.94);
+    border-top-color: #2d2d35;
   }
 </style>

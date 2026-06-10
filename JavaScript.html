@@ -8,6 +8,7 @@
    * =================================================================== */
 
   const START_MONEY = 1000000;
+  const FEE_RATE = 0.001; // 매수·매도 양방향 0.1% 수수료
   const TICK_MS = 1500;
   const VOL = 0.012;
   const LEV_STEPS = [1, 2, 5, 10, 20];
@@ -19,9 +20,46 @@
     return Date.now() + ((typeof S !== "undefined" && S && S.clockOffset) || 0);
   }
 
+  // ---------- 통화 표기 (해외주=$, 국내주·코인=원) ----------
+  // 가격 거짓 섞지 않도록: 게임 중엔 S.category로 통화를 정해 로그에 같이 저장하고,
+  // 표시할 땐 그 단위를 그대로 사용. 옛 기록(unit 없음)은 기호 없이 숫자만.
+  function curOf(cat) {
+    return cat === "us" ? "usd" : "krw";
+  } // coin 시드는 KRW
+  function fmtMoney(n, unit) {
+    var v = fmtNum(n);
+    if (unit === "usd") return "$" + v;
+    if (unit === "krw") return v + "원";
+    return v; // 단위 모름(옛 기록) → 숫자만
+  }
+
   // ---------- 사운드 (Web Audio, 파일 없이 합성음) ----------
+  // iOS Safari는 AudioContext를 반드시 "사용자 제스처(탭) 핸들러 안"에서 생성/resume해야 unlock됨.
+  // 그래서 게임 시작·입장·매수 등 첫 탭 시점에 unlockAudio()를 호출해 미리 깨워둔다.
   let AC = null,
     SFX_ON = true;
+  function unlockAudio() {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      if (AC.state === "suspended") AC.resume();
+      // 무음 버퍼를 한 번 흘려보내 iOS 오디오 파이프라인을 확실히 연다
+      const b = AC.createBuffer(1, 1, 22050),
+        s = AC.createBufferSource();
+      s.buffer = b;
+      s.connect(AC.destination);
+      s.start(0);
+    } catch (e) {}
+  }
+  // 어떤 탭이든 첫 제스처에서 오디오 unlock (1회). iOS 무음 문제의 핵심 대응.
+  ["touchend", "click", "pointerdown"].forEach(function (ev) {
+    document.addEventListener(
+      ev,
+      function once() {
+        unlockAudio();
+      },
+      { passive: true },
+    );
+  });
   function sfx(type) {
     if (!SFX_ON) return;
     try {
@@ -145,6 +183,8 @@
     } catch (e) {}
     const sw = document.getElementById("theme-switch");
     if (sw) sw.classList.toggle("on", theme === "dark");
+    const sw2 = document.getElementById("lobby-theme-switch");
+    if (sw2) sw2.classList.toggle("on", theme === "dark");
     refreshTheme();
   }
   // 수익률 카운트업 (0 → 최종값)
@@ -294,6 +334,8 @@
 
   // ---------- 게임 시작 ----------
   function startGame(nick, email, items, prices, source) {
+    var lx0 = document.getElementById("liq-exit");
+    if (lx0) lx0.style.display = "none";
     const seed = (Math.random() * 0x7fffffff) | 0;
     rng = mulberry32(seed);
     const priceMap = {};
@@ -335,6 +377,7 @@
       log: [],
       news: [],
       startLev: setup.leverage,
+      cur: curOf(setup.category),
     };
     S.news = genNewsSchedule();
     S.gameId = "s_" + Date.now() + "_" + ((Math.random() * 1e6) | 0); // 싱글: 한 판이 한 게임
@@ -385,16 +428,19 @@
   }
 
   // 멀티: 포지션 상태(state)와 공유 시세로 다른 플레이어 수익률을 각자 동일하게 계산
-  function myStateJSON() {
+  // finalRet: 게임 종료(또는 청산) 시 그 시점 수익률을 박제. 결과화면·종료 후 순위는 이 값을 우선 사용.
+  function myStateJSON(finalRet) {
     const t = S.me;
-    return JSON.stringify({
+    const o = {
       posIdx: t.posIdx,
       entryPrice: t.entryPrice,
       entryCapital: t.entryCapital,
       leverage: t.leverage,
       cash: t.cash,
       liquidated: t.liquidated,
-    });
+    };
+    if (finalRet != null) o.finalRet = Math.round(finalRet * 100) / 100;
+    return JSON.stringify(o);
   }
   function equityFromState(st) {
     if (!st) return START_MONEY;
@@ -408,6 +454,11 @@
   }
   function retFromState(st) {
     return (equityFromState(st) / START_MONEY - 1) * 100;
+  }
+  // 순위 계산용 수익률: finalRet(박제값)이 있으면 그걸, 없으면 실시간 계산.
+  function rankRetOfState(st) {
+    if (st && st.finalRet != null) return Number(st.finalRet);
+    return retFromState(st);
   }
 
   // 닉네임 기반 고정 색상 아바타 (대기실·기록 공용)
@@ -430,9 +481,11 @@
 
   // ---------- 뉴스 일정 (시드 결정론) ----------
   function genNewsSchedule() {
-    const total = S.totalTicks,
-      n = 4 + Math.floor(rng() * 3),
-      out = [];
+    const total = S.totalTicks;
+    // 게임 분당 약 3.5개 목표, 최소 3개, totalTicks/2 상한으로 과밀 방지
+    const base = Math.round(S.durationMin * 3.5);
+    const n = Math.max(3, Math.min(base, Math.floor(total / 2)));
+    const out = [];
     for (let k = 0; k < n; k++) {
       const at = Math.floor(rng() * total * 0.85) + Math.floor(total * 0.06);
       const idx = Math.floor(rng() * S.instruments.length);
@@ -563,8 +616,10 @@
         if (t === S.me && S.mode === "multi") syncMyState(false);
       }
     });
-    if (S.mode === "multi") maybeSyncMulti();
-    else botThink();
+    if (S.mode === "multi") {
+      maybeSyncMulti();
+      checkMultiEarlyEnd();
+    } else botThink();
     updateCharts();
     updateUI();
     if (S.equitySeries) S.equitySeries.push(Math.round(ret(S.me) * 100) / 100); // 추이 기록
@@ -574,15 +629,15 @@
   function enter(t, idx) {
     t.posIdx = idx;
     t.entryPrice = instPrice(idx);
-    t.entryCapital = t.cash;
+    t.entryCapital = t.cash * (1 - FEE_RATE); // 매수 수수료 0.1% 차감
     if (t.strategy === "human")
       logEvt("buy", S.instruments[idx].label, t.entryPrice, t.leverage, null);
   }
   function sell(t, silent) {
     if (t.posIdx < 0) return false;
     const idx = t.posIdx,
-      eq = equity(t),
-      pnl = eq - t.entryCapital;
+      eq = equity(t) * (1 - FEE_RATE),
+      pnl = eq - t.entryCapital; // 매도 수수료 0.1% 차감
     t.cash = eq;
     t.posIdx = -1;
     t.entryPrice = 0;
@@ -602,9 +657,9 @@
     if (S.tick < t.levCdTick) return false;
     if (t.posIdx >= 0) {
       const eq = equity(t);
-      t.entryCapital = eq;
+      t.entryCapital = eq * (1 - FEE_RATE);
       t.entryPrice = instPrice(t.posIdx);
-    }
+    } // 재진입 수수료
     t.leverage = LEV_STEPS[i + 1];
     t.levCdTick = S.tick + COOLDOWN_TICKS;
     if (t.strategy === "human")
@@ -617,6 +672,7 @@
       );
     return true;
   }
+  // 거래 로그: 통화 단위(cur)도 같이 저장 → 상세 타임라인에서 $/원 정확히 표기
   function logEvt(type, label, price, lev, pnl) {
     S.log.push({
       sec: S.elapsed,
@@ -625,6 +681,7 @@
       price: Math.round(price),
       lev,
       pnl: pnl == null ? null : Math.round(pnl),
+      cur: S.cur,
     });
   }
 
@@ -658,6 +715,28 @@
       if (S.mode === "multi") syncMyState(false);
     }
     updateUI();
+  };
+
+  // 멀티 조기종료: 살아있는(=청산 안 된) 플레이어가 1명 이하면 게임 끝
+  function checkMultiEarlyEnd() {
+    if (S.mode !== "multi" || S._over) return;
+    // 나 + 다른 플레이어들의 청산 여부 집계
+    var aliveCount = 0;
+    if (!S.me.liquidated) aliveCount++;
+    (S.players || []).forEach(function (p) {
+      if (String(p.nick) === String(S.nick)) return; // 나는 위에서 셈
+      var st = p.state;
+      var dead = st && st.liquidated;
+      if (!dead) aliveCount++;
+    });
+    // 참가자가 2명 이상인 게임에서만 (1인 방은 시간 만료로 끝)
+    var total = (S.players || []).length || 1;
+    if (total >= 2 && aliveCount <= 1) endGame();
+  }
+  document.getElementById("liq-exit").onclick = () => {
+    if (!S) return;
+    if (S.mode === "multi" && !S._over) endGame();
+    else if (S.mode === "single" && !S._over) endGame();
   };
 
   // ---------- AI 봇 (시드 결정론) ----------
@@ -725,18 +804,35 @@
       const py = y.getPixelForValue(liq),
         a = c.chartArea,
         ctx = c.ctx;
+      // 청산선은 차트선(빨강/파랑)과 안 겹치게 주황 계열 + 라벨에 배경칩을 깔아 항상 또렷하게.
+      const LINE = "#ff8f1f",
+        BGTXT = "#ffffff";
       ctx.save();
-      ctx.strokeStyle = "#f04452";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = LINE;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([6, 4]);
       ctx.beginPath();
       ctx.moveTo(a.left, py);
       ctx.lineTo(a.right, py);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "#f04452";
+      // 라벨 배경칩
       ctx.font = "bold 10px Pretendard";
-      ctx.fillText("청산선 " + fmtNum(liq), a.left + 4, py - 4);
+      const txt = "청산선 " + fmtMoney(liq, S.cur);
+      const tw = ctx.measureText(txt).width;
+      const ly = py - 12,
+        lx = a.left + 4;
+      ctx.fillStyle = LINE;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(lx, ly, tw + 12, 15, 4);
+        ctx.fill();
+      } else {
+        ctx.fillRect(lx, ly, tw + 12, 15);
+      }
+      ctx.fillStyle = BGTXT;
+      ctx.textBaseline = "middle";
+      ctx.fillText(txt, lx + 6, ly + 8);
       ctx.restore();
     },
   };
@@ -817,7 +913,7 @@
       document.getElementById(pre + "-name").textContent = inst.label;
       const pe = document.getElementById(pre + "-price");
       pe.textContent =
-        fmtNum(inst.price) +
+        fmtMoney(inst.price, S.cur) +
         " (" +
         (chg >= 0 ? "+" : "") +
         chg.toFixed(2) +
@@ -850,7 +946,7 @@
     t.textContent = text;
     t.classList.add("show");
     clearTimeout(t._t);
-    t._t = setTimeout(() => t.classList.remove("show"), 2600);
+    t._t = setTimeout(() => t.classList.remove("show"), 5600);
   }
   function liquidationFX() {
     sfx("liq");
@@ -859,7 +955,13 @@
     setTimeout(() => app.classList.remove("shake"), 500);
     const ov = document.getElementById("liq-overlay");
     ov.classList.add("show");
-    setTimeout(() => ov.classList.remove("show"), 1300);
+    // 싱글·멀티 모두 청산 후 즉시 결과보기 버튼 노출
+    var lx = document.getElementById("liq-exit");
+    if (lx) lx.style.display = "";
+    setTimeout(
+      () => ov.classList.remove("show"),
+      S.mode === "multi" ? 1500 : 1300,
+    );
   }
 
   // ---------- UI ----------
@@ -908,11 +1010,24 @@
       btn.textContent = "↑ " + LEV_STEPS[i + 1] + "배";
     }
   }
+  // ---------- 수익률 공개 시점 ----------
+  // 1분 게임: 끝나기 30초 전 / 3분 이상: 끝나기 60초 전
+  function revealThreshold() {
+    return S.durationMin <= 1 ? 30 : 60;
+  }
+  function secondsLeft() {
+    return S.mode === "multi" && S.endAt
+      ? Math.round((S.endAt - nowSync()) / 1000)
+      : S.durationSec - S.elapsed;
+  }
+
   function renderRank(reveal) {
     if (S.mode === "multi") return renderRankMulti(reveal);
     const arr = [S.me, ...S.bots].slice().sort((a, b) => equity(b) - equity(a));
     const ul = document.getElementById(reveal ? "r-rank-list" : "g-rank");
     ul.innerHTML = "";
+    const showVal =
+      reveal || (S.me && S.me.liquidated) || secondsLeft() <= revealThreshold();
     arr.forEach((t, i) => {
       const r = ret(t),
         me = t === S.me;
@@ -920,7 +1035,7 @@
       li.className = "rank-row" + (me ? " me" : "");
       li.innerHTML = `<span class="rank-no">${i + 1}</span>
       <span class="rank-name">${t.name}${t.liquidated ? " 💀" : ""}</span>
-      <span class="rank-val ${r >= 0 ? "up" : "down"}" ${reveal ? "" : 'style="display:none"'}>${(r >= 0 ? "+" : "") + r.toFixed(2)}%</span>`;
+      <span class="rank-val ${r >= 0 ? "up" : "down"}" ${showVal ? "" : 'style="display:none"'}>${(r >= 0 ? "+" : "") + r.toFixed(2)}%</span>`;
       ul.appendChild(li);
     });
     return arr;
@@ -930,6 +1045,8 @@
   function endGame() {
     if (S._over) return;
     S._over = true;
+    var lx0 = document.getElementById("liq-exit");
+    if (lx0) lx0.style.display = "none";
     clearInterval(S.timer);
     clearInterval(S.priceTimer);
     if (S.me.posIdx >= 0) sell(S.me, true);
@@ -994,12 +1111,7 @@
         : "결과가 저장되었습니다 (이메일 미입력)";
       google.script.run
         .withSuccessHandler((fb) => {
-          aiEl.className = "ai-feedback";
-          aiEl.textContent = fb
-            ? fb
-            : "AI 분석을 불러오지 못했어요 (API 키/쿼터 확인). 거래 " +
-              S.log.length +
-              "건 기록됨.";
+          renderAIFeedback(aiEl, fb, S.log.length);
         })
         .withFailureHandler(() => {
           aiEl.className = "ai-feedback";
@@ -1014,6 +1126,22 @@
         S.log.length +
         "건 기록됨. 배포 후 AI 분석 활성화.";
       note.textContent = "(미리보기 모드: 저장은 배포 후 동작)";
+    }
+    // G: 거래 내역 탭 채우기 + 결과 탭 AI로 초기화
+    const rTrade = document.getElementById("r-trade");
+    if (rTrade) rTrade.innerHTML = tradeTimelineHTML(S.log);
+    const rtabs = document.getElementById("r-tabs");
+    if (rtabs) {
+      rtabs
+        .querySelectorAll(".tab-btn")
+        .forEach((b, i) => b.classList.toggle("active", i === 0));
+      document
+        .getElementById("screen-result")
+        .querySelectorAll(".tab-panel")
+        .forEach((p, i) => {
+          p.style.display = i === 0 ? "" : "none";
+          p.classList.toggle("active", i === 0);
+        });
     }
     show("result");
   }
@@ -1057,6 +1185,7 @@
       if (c) c.destroy();
     });
     charts = [null, null];
+    stopResultHeartbeat();
     if (
       S &&
       S.mode === "multi" &&
@@ -1078,11 +1207,12 @@
       .map((e) => {
         const t = fmtTime(e.sec);
         if (e.type === "buy")
-          return `[${t}] 매수 ${e.label} @${e.price} (${e.lev}배)`;
+          return `[${t}] 매수 ${e.label} @${fmtMoney(e.price, e.cur)} (${e.lev}배)`;
         if (e.type === "sell")
-          return `[${t}] 매도 ${e.label} @${e.price} 손익 ${e.pnl >= 0 ? "+" : ""}${e.pnl}`;
+          return `[${t}] 매도 ${e.label} @${fmtMoney(e.price, e.cur)} 손익 ${e.pnl >= 0 ? "+" : ""}${e.pnl}`;
         if (e.type === "levup") return `[${t}] 레버리지 ${e.lev}배로 상향`;
-        if (e.type === "liq") return `[${t}] 청산 ${e.label} @${e.price}`;
+        if (e.type === "liq")
+          return `[${t}] 청산 ${e.label} @${fmtMoney(e.price, e.cur)}`;
         return "";
       })
       .filter(Boolean);
@@ -1115,19 +1245,94 @@
     );
   }
 
+  // ---------- AI 피드백 표시 포맷 (가독성) ----------
+  // [사실]/[해석]/[조언] 라벨과 [00:12] 시간대 앞에서 줄바꿈해 읽기 쉽게.
+  // 옛 기록(라벨 없는 한 덩어리)도 동일 처리. 서버 응답은 안 건드림.
+  function formatFeedback(raw) {
+    if (!raw) return "";
+    var s = String(raw).trim();
+    // 라벨 앞 줄바꿈: [사실][해석][조언] (맨 앞 라벨은 줄바꿈 안 함)
+    s = s.replace(/\s*(\[(?:사실|해석|조언)\])/g, function (m, tag, off) {
+      return off === 0 ? tag : "\n" + tag;
+    });
+    // 시간대 [00:12] 앞 줄바꿈 (문장 중간에 여러 개 섞인 경우)
+    s = s.replace(/\s*(\[\d{1,2}:\d{2}\])/g, function (m, tag, off) {
+      return off === 0 ? tag : "\n" + tag;
+    });
+    return s.replace(/\n{3,}/g, "\n\n").trim();
+  }
+  // 피드백을 라벨별 칩 + 본문 구조로 렌더 (라벨 있으면 예쁘게, 없으면 줄바꿈 텍스트)
+  function renderAIFeedback(el, fb, logCount) {
+    el.className = "ai-feedback";
+    if (!fb) {
+      el.textContent =
+        "AI 분석을 불러오지 못했어요 (API 키/쿼터 확인). 거래 " +
+        (logCount || 0) +
+        "건 기록됨.";
+      return;
+    }
+    var txt = formatFeedback(fb);
+    // 라벨 단위로 쪼개서 칩+문장 블록 생성
+    var hasLabel = /\[(사실|해석|조언)\]/.test(txt);
+    if (!hasLabel) {
+      el.innerHTML =
+        '<div class="fb-line">' +
+        txt.split("\n").map(escapeHtml).join("<br>") +
+        "</div>";
+      return;
+    }
+    var html = "";
+    // 첫 라벨 이전의 인사말(있으면) 분리
+    var firstIdx = txt.search(/\[(사실|해석|조언)\]/);
+    if (firstIdx > 0) {
+      var intro = txt.slice(0, firstIdx).trim();
+      if (intro)
+        html += '<div class="fb-intro">' + escapeHtml(intro) + "</div>";
+    }
+    var rest = txt.slice(firstIdx);
+    var parts = rest.split(/\n(?=\[(?:사실|해석|조언)\])/);
+    parts.forEach(function (p) {
+      p = p.trim();
+      if (!p) return;
+      var m = p.match(/^\[(사실|해석|조언)\]\s*([\s\S]*)$/);
+      if (m) {
+        var tag = m[1],
+          body = m[2].trim();
+        var cls =
+          tag === "사실" ? "fb-fact" : tag === "해석" ? "fb-read" : "fb-tip";
+        html +=
+          '<div class="fb-block"><span class="fb-tag ' +
+          cls +
+          '">' +
+          tag +
+          '</span><span class="fb-body">' +
+          escapeHtml(body).replace(/\n/g, "<br>") +
+          "</span></div>";
+      } else {
+        html +=
+          '<div class="fb-line">' +
+          escapeHtml(p).replace(/\n/g, "<br>") +
+          "</div>";
+      }
+    });
+    el.innerHTML = html;
+  }
+
   // ---------- 홈 / 기록 화면 ----------
   document.getElementById("home-single").onclick = () => show("setup");
   document.getElementById("home-history").onclick = () => {
     loadHistoryGames();
     show("history");
   };
-  document.getElementById("home-join").onclick = () => {
-    document.getElementById("j-code").value = "";
-    document.getElementById("j-err").textContent = "";
-    show("join");
-    setTimeout(() => document.getElementById("j-code").focus(), 60);
-  };
-  document.getElementById("join-back").onclick = () => show("home");
+  // E: 게임방법 모달
+  document.getElementById("home-howto").onclick = () =>
+    document.getElementById("how-modal").classList.add("show");
+  document.getElementById("how-close").onclick = () =>
+    document.getElementById("how-modal").classList.remove("show");
+  document.getElementById("how-modal").addEventListener("click", function (e) {
+    if (e.target === this) this.classList.remove("show");
+  });
+  document.getElementById("join-back").onclick = () => show("multi-menu");
   document.getElementById("setup-back").onclick = () => show("home");
   document.getElementById("hist-back").onclick = () => show("home");
   document.getElementById("gp-back").onclick = () => {
@@ -1143,6 +1348,34 @@
     }
   };
   document.getElementById("btn-home").addEventListener("click", () => {}); // (위에서 onclick 지정)
+
+  // F+G: 탭 전환 공용 함수
+  function setupTabs(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.addEventListener("click", function (e) {
+      const btn = e.target.closest(".tab-btn");
+      if (!btn) return;
+      const tab = btn.dataset.tab;
+      const section = container.parentElement;
+      // 버튼 active
+      container
+        .querySelectorAll(".tab-btn")
+        .forEach((b) => b.classList.toggle("active", b === btn));
+      // 패널 토글
+      section.querySelectorAll(".tab-panel").forEach((p) => {
+        const show = p.dataset.panel === tab;
+        p.style.display = show ? "" : "none";
+        p.classList.toggle("active", show);
+        // 차트 탭 활성화 시 resize (display:none 상태에서 그려진 경우 대응)
+        if (show && tab === "chart" && detailChart) {
+          requestAnimationFrame(() => detailChart.resize());
+        }
+      });
+    });
+  }
+  setupTabs("d-tabs");
+  setupTabs("r-tabs");
 
   // ===== 기록: 게임 단위 그룹 → 참가자 → 상세 (3단) =====
   let HIST = { current: null, fromPlayers: false };
@@ -1266,8 +1499,8 @@
   }
   function renderDetail(d) {
     const ai = document.getElementById("d-ai");
-    ai.className = "ai-feedback";
     if (!d) {
+      ai.className = "ai-feedback";
       ai.textContent = "기록을 찾지 못했어요.";
       return;
     }
@@ -1293,7 +1526,11 @@
       "/" +
       d.totalPlayers +
       "위";
-    ai.textContent = d.feedback || "AI 분석 기록이 없어요.";
+    // AI 분석 가독성 포맷 적용 (라벨/시간대 줄바꿈)
+    renderAIFeedback(ai, d.feedback, null);
+    if (!d.feedback) {
+      ai.textContent = "AI 분석 기록이 없어요.";
+    }
 
     // 시각화: chartData 있으면 수익률 추이 차트 + 거래 타임라인, 없으면(옛 기록) 텍스트 폴백
     let cd = null;
@@ -1310,6 +1547,21 @@
         escapeHtml(d.detail || "거래 내역 없음") +
         "</pre>";
     }
+
+    // 탭 초기화: 항상 AI 탭으로 시작
+    const dtabs = document.getElementById("d-tabs");
+    if (dtabs) {
+      dtabs
+        .querySelectorAll(".tab-btn")
+        .forEach((b, i) => b.classList.toggle("active", i === 0));
+      document
+        .getElementById("screen-detail")
+        .querySelectorAll(".tab-panel")
+        .forEach((p, i) => {
+          p.style.display = i === 0 ? "" : "none";
+          p.classList.toggle("active", i === 0);
+        });
+    }
   }
   function escapeHtml(s) {
     return String(s).replace(
@@ -1318,7 +1570,30 @@
     );
   }
 
-  // 수익률 추이 라인차트 (상세)
+  // 수익률 추이 라인차트 (상세) — 0% 기준 위=빨강(이익)/아래=파랑(손실), 0선 점선
+  const zeroLinePlugin = {
+    id: "zeroLine",
+    afterDraw(c) {
+      const y = c.scales.y;
+      if (!y) return;
+      if (0 < y.min || 0 > y.max) return;
+      const py = y.getPixelForValue(0),
+        a = c.chartArea,
+        ctx = c.ctx;
+      ctx.save();
+      ctx.strokeStyle =
+        document.documentElement.getAttribute("data-theme") === "dark"
+          ? "#5a6068"
+          : "#b0b8c1";
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(a.left, py);
+      ctx.lineTo(a.right, py);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
   function renderDetailChart(retSeries) {
     const card = document.getElementById("d-chart-card");
     var ex = Chart.getChart("d-chart");
@@ -1329,7 +1604,14 @@
       return;
     }
     card.style.display = "";
-    const up = retSeries[retSeries.length - 1] >= 0;
+    // segment 색: 두 점 중 하나라도 0 미만이면 손실색(파랑), 아니면 이익색(빨강)
+    const upC = THEME.up,
+      downC = THEME.down;
+    const segColor = (ctx) => {
+      const a = ctx.p0.parsed.y,
+        b = ctx.p1.parsed.y;
+      return a < 0 || b < 0 ? downC : upC;
+    };
     detailChart = new Chart(document.getElementById("d-chart"), {
       type: "line",
       data: {
@@ -1337,14 +1619,15 @@
         datasets: [
           {
             data: retSeries,
-            borderColor: up ? THEME.up : THEME.down,
+            borderColor: upC,
             borderWidth: 2,
             fill: true,
-            backgroundColor: up
-              ? "rgba(240,68,82,.10)"
-              : "rgba(49,130,246,.10)",
+            backgroundColor: "rgba(120,130,145,.06)",
             tension: 0.3,
             pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHoverBackgroundColor: upC,
+            segment: { borderColor: segColor },
           },
         ],
       },
@@ -1352,7 +1635,25 @@
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        interaction: { mode: "index", intersect: false }, // hover/touch 어디를 짚어도 가까운 지점 표시
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            displayColors: false,
+            callbacks: {
+              // x축 라벨(인덱스) → 경과 시간. 추이는 매 틱(TICK_MS) 1포인트로 쌓임.
+              title: (items) => {
+                const i = items[0].dataIndex;
+                return fmtTime(Math.round((i * TICK_MS) / 1000));
+              },
+              label: (item) => {
+                const v = item.parsed.y;
+                return (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+              },
+            },
+          },
+        },
         scales: {
           x: { display: false },
           y: {
@@ -1366,9 +1667,10 @@
           },
         },
       },
+      plugins: [zeroLinePlugin],
     });
   }
-  // 거래 타임라인 HTML (색 배지 + 손익)
+  // 거래 타임라인 HTML (색 배지 + 손익) — 유저 친화 문구 + 통화 표기
   function tradeTimelineHTML(log) {
     if (!log || !log.length)
       return '<div class="tl-empty">거래 없음 (관망)</div>';
@@ -1381,19 +1683,25 @@
         if (e.type === "buy") {
           cls = "tl-buy";
           label = "매수";
-          main = e.label + " @" + fmtNum(e.price) + " · " + e.lev + "배";
+          main =
+            e.label +
+            " " +
+            fmtMoney(e.price, e.cur) +
+            "에 매수 · " +
+            e.lev +
+            "배";
         } else if (e.type === "sell") {
           cls = "tl-sell";
           label = "매도";
-          main = e.label + " @" + fmtNum(e.price);
+          main = e.label + " " + fmtMoney(e.price, e.cur) + "에 매도";
         } else if (e.type === "levup") {
           cls = "tl-lev";
           label = "레버리지";
-          main = e.lev + "배로 상향";
+          main = "레버리지 " + e.lev + "배로 올림";
         } else if (e.type === "liq") {
           cls = "tl-liq";
           label = "청산";
-          main = e.label + " @" + fmtNum(e.price);
+          main = e.label + " " + fmtMoney(e.price, e.cur) + "에서 청산";
         } else return "";
         const pnl =
           e.type === "sell" && e.pnl != null
@@ -1415,15 +1723,28 @@
   bindSeg("mseg-leverage", "lev", "leverage", msetup);
   bindSeg("mseg-duration", "min", "durationMin", msetup);
 
-  document.getElementById("home-multi").onclick = () => {
+  // 홈 → 멀티 메뉴 (선택 화면)
+  document.getElementById("home-multi").onclick = () => show("multi-menu");
+
+  // 멀티 메뉴 → 방 만들기 / 코드 입장
+  document.getElementById("mm-back").onclick = () => show("home");
+  document.getElementById("mm-create").onclick = () => {
     renderMHint();
     show("multi-setup");
   };
-  document.getElementById("ms-back").onclick = () => show("home");
+  document.getElementById("mm-join").onclick = () => {
+    document.getElementById("j-code").value = "";
+    document.getElementById("j-err").textContent = "";
+    show("join");
+    setTimeout(() => document.getElementById("j-code").focus(), 60);
+  };
+
+  document.getElementById("ms-back").onclick = () => show("multi-menu");
 
   // 방 만들기
   document.getElementById("btn-create").onclick = () => {
     const nick = document.getElementById("mn-nickname").value.trim();
+    const email = document.getElementById("mn-email").value.trim();
     const err = document.getElementById("mn-err");
     const btn = document.getElementById("btn-create");
     if (!nick) {
@@ -1443,7 +1764,12 @@
       .withSuccessHandler((res) => {
         btn.disabled = false;
         btn.textContent = "방 만들기";
-        enterLobby(res.roomId, nick, true, res.inviteUrl);
+        enterLobby(res.roomId, nick, true, res.inviteUrl, email);
+        // 방 생성 직후 AI 뉴스 비동기 채움 (fire-and-forget): 대기실 폴링이 news를 실어 나름
+        google.script.run
+          .withSuccessHandler(() => {})
+          .withFailureHandler(() => {})
+          .prepareRoomNews(res.roomId, msetup.category, labels);
       })
       .withFailureHandler(() => {
         btn.disabled = false;
@@ -1456,6 +1782,7 @@
         durationMin: msetup.durationMin,
         host: nick,
         labels: labels,
+        email: email,
       });
   };
 
@@ -1468,6 +1795,7 @@
       .trim()
       .toUpperCase();
     const nick = document.getElementById("j-nickname").value.trim();
+    const email = document.getElementById("j-email").value.trim();
     const err = document.getElementById("j-err");
     const btn = document.getElementById("btn-join");
     if (!code) {
@@ -1498,25 +1826,30 @@
           else err.textContent = "방을 찾을 수 없어요 (" + code + ")";
           return;
         }
-        enterLobby(code, nick, false, res.inviteUrl);
+        enterLobby(code, nick, false, res.inviteUrl, email);
       })
       .withFailureHandler(() => {
         btn.disabled = false;
         btn.textContent = "입장하기";
         err.textContent = "입장 실패. 다시 시도해줘.";
       })
-      .joinRoom(code, nick);
+      .joinRoom(code, nick, email);
   };
 
-  function enterLobby(roomId, nick, isHost, inviteUrl) {
-    MP = { roomId, nick, isHost, inviteUrl: inviteUrl || "", lastStart: 0 };
+  function enterLobby(roomId, nick, isHost, inviteUrl, email) {
+    stopResultHeartbeat();
+    MP = {
+      roomId,
+      nick,
+      isHost,
+      inviteUrl: inviteUrl || "",
+      lastStart: 0,
+      email: email || (MP && MP.email) || "",
+    };
     document.getElementById("l-code").textContent = roomId;
     document.getElementById("btn-startroom").textContent = "게임 시작";
     document.getElementById("btn-startroom").disabled = false;
-    document.getElementById("btn-startroom").style.display = isHost
-      ? ""
-      : "none";
-    document.getElementById("l-wait").style.display = isHost ? "none" : "";
+    applyHostUI(isHost);
     document.getElementById("l-link").textContent = "";
     try {
       google.script.url.getLocation(function (loc) {
@@ -1529,6 +1862,30 @@
     show("lobby");
     pollLobby();
     MP.pollTimer = setInterval(pollLobby, 1500);
+    // 하트비트: 대기실에 머무는 동안 내 updatedAt 갱신 (유령 오판정 방지)
+    heartbeat();
+    MP.hbTimer = setInterval(heartbeat, 7000);
+  }
+  // 방장 여부에 따라 시작버튼/대기문구/설정버튼 표시 (위임으로 바뀔 수 있어 분리)
+  function applyHostUI(isHost) {
+    document.getElementById("btn-startroom").style.display = isHost
+      ? ""
+      : "none";
+    document.getElementById("l-wait").style.display = isHost ? "none" : "";
+    document.getElementById("btn-lobby-settings").style.display = isHost
+      ? ""
+      : "none";
+  }
+  // 대기실/결과화면에서 내 생존 신호만 보냄 (state는 그대로, updatedAt만 갱신)
+  function heartbeat() {
+    if (
+      !(MP && MP.roomId && window.google && google.script && google.script.run)
+    )
+      return;
+    google.script.run
+      .withSuccessHandler(() => {})
+      .withFailureHandler(() => {})
+      .touchPlayer(MP.roomId, MP.nick);
   }
   function pollLobby() {
     google.script.run
@@ -1539,6 +1896,12 @@
   function onLobby(d) {
     if (!d || d.error) return;
     MP.room = d;
+    // 방장 위임 반영: 매 폴링마다 내가 방장인지 재판정
+    const iAmHost = String(d.host) === String(MP.nick);
+    if (iAmHost !== MP.isHost) {
+      MP.isHost = iAmHost;
+      applyHostUI(iAmHost);
+    }
     const ul = document.getElementById("l-players");
     ul.innerHTML = "";
     const seen = {};
@@ -1571,6 +1934,7 @@
     if (d.status === "playing" && d.startTime && d.startTime > MP.lastStart) {
       MP.lastStart = d.startTime;
       clearInterval(MP.pollTimer);
+      clearInterval(MP.hbTimer);
       startMultiGame(d);
     }
   }
@@ -1588,6 +1952,7 @@
   // 대기실 나가기 = 서버에서 진짜 방 나가기
   document.getElementById("lobby-leave").onclick = () => {
     clearInterval(MP.pollTimer);
+    clearInterval(MP.hbTimer);
     if (
       MP &&
       MP.roomId &&
@@ -1598,6 +1963,89 @@
       google.script.run.leaveRoom(MP.roomId, MP.nick);
     }
     show("home");
+  };
+
+  // 대기실 조건 변경 모달
+  const lobbySettingsModal = document.getElementById("lobby-settings-modal");
+  const lsSetup = { category: "kr", leverage: 1, durationMin: 3 };
+
+  document.getElementById("btn-lobby-settings").onclick = () => {
+    // 현재 방 조건으로 모달 초기화
+    if (MP.room) {
+      lsSetup.category = MP.room.category || "kr";
+      lsSetup.leverage = MP.room.leverage || 1;
+      lsSetup.durationMin = MP.room.durationMin || 3;
+    }
+    // seg 버튼 active 동기화
+    ["ls-seg-category", "ls-seg-leverage", "ls-seg-duration"].forEach(
+      (segId) => {
+        const seg = document.getElementById(segId);
+        if (!seg) return;
+        const key =
+          segId === "ls-seg-category"
+            ? "category"
+            : segId === "ls-seg-leverage"
+              ? "leverage"
+              : "durationMin";
+        const attr =
+          segId === "ls-seg-category"
+            ? "cat"
+            : segId === "ls-seg-leverage"
+              ? "lev"
+              : "min";
+        seg.querySelectorAll(".seg-btn").forEach((btn) => {
+          const v = isNaN(+btn.dataset[attr])
+            ? btn.dataset[attr]
+            : +btn.dataset[attr];
+          btn.classList.toggle("active", v == lsSetup[key]);
+        });
+      },
+    );
+    lobbySettingsModal.classList.add("show");
+  };
+  document.getElementById("ls-close").onclick = () =>
+    lobbySettingsModal.classList.remove("show");
+  lobbySettingsModal.addEventListener("click", function (e) {
+    if (e.target === this) this.classList.remove("show");
+  });
+
+  bindSeg("ls-seg-category", "cat", "category", lsSetup);
+  bindSeg("ls-seg-leverage", "lev", "leverage", lsSetup);
+  bindSeg("ls-seg-duration", "min", "durationMin", lsSetup);
+
+  document.getElementById("btn-ls-apply").onclick = function () {
+    if (!(window.google && google.script && google.script.run)) return;
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = "적용 중...";
+    google.script.run
+      .withSuccessHandler((res) => {
+        btn.disabled = false;
+        btn.textContent = "적용";
+        if (res && res.error) {
+          alert("변경 실패: " + res.error);
+          return;
+        }
+        lobbySettingsModal.classList.remove("show");
+        // 카테고리 바뀌면 뉴스 재생성
+        if (!MP.room || MP.room.category !== lsSetup.category) {
+          const labels = INSTR[lsSetup.category].map((x) => x[1]);
+          google.script.run
+            .withSuccessHandler(() => {})
+            .withFailureHandler(() => {})
+            .prepareRoomNews(MP.roomId, lsSetup.category, labels);
+        }
+      })
+      .withFailureHandler(() => {
+        btn.disabled = false;
+        btn.textContent = "적용";
+        alert("변경 실패. 다시 시도해줘.");
+      })
+      .updateRoomSettings(MP.roomId, {
+        category: lsSetup.category,
+        leverage: lsSetup.leverage,
+        durationMin: lsSetup.durationMin,
+      });
   };
   document.getElementById("l-copy").onclick = async function () {
     const url = MP.inviteUrl || "";
@@ -1640,6 +2088,8 @@
 
   // 멀티 게임 시작 (시드 공유 → 가격/뉴스 전원 동일)
   function startMultiGame(d) {
+    var lx0 = document.getElementById("liq-exit");
+    if (lx0) lx0.style.display = "none";
     rng = mulberry32(d.seed);
     const items = INSTR[d.category].map(([symbol, label]) => ({
       symbol,
@@ -1659,7 +2109,7 @@
     });
     S = {
       nick: MP.nick,
-      email: "",
+      email: MP.email || "",
       seed: d.seed,
       source: "멀티",
       mode: "multi",
@@ -1681,12 +2131,14 @@
       syncEvery: 2,
       startLev: d.leverage,
       startTime: d.startTime,
+      cur: curOf(d.category),
     };
     S.news = genNewsSchedule();
     S.gameId = "r_" + MP.roomId + "_" + d.startTime; // 같은 방·같은 라운드 = 전원 동일 gameId
     S.equitySeries = [0];
     S.clockOffset = d.serverNow ? d.serverNow - Date.now() : 0;
     S.endAt = d.startTime + COUNTDOWN_MS + S.durationSec * 1000;
+    // fetchAINews는 멀티에서 호출 안 함: roomNews(prepareRoomNews로 공유된)를 쓰므로 전원 동일 헤드라인 보장
     document.getElementById("g-source").textContent = "멀티";
     document.getElementById("g-brief").textContent =
       "📊 친구들과 실시간 대결! 같은 시장·같은 뉴스로 승부.";
@@ -1705,28 +2157,49 @@
   }
 
   // 내 포지션 상태 업로드 + 전체 명단(상태) 갱신
-  function syncMyState(finished) {
+  function syncMyState(finished, finalRet) {
     if (S.mode !== "multi") return;
     if (!(window.google && google.script && google.script.run)) return;
     if (S.ended && !finished) return;
     google.script.run
       .withSuccessHandler((ps) => {
-        if (ps && (!S.ended || finished)) S.players = ps;
+        if (ps && (!S.ended || finished)) S.players = mergePlayers(ps);
       })
       .withFailureHandler(() => {})
-      .updatePlayer(S.roomId, S.nick, myStateJSON(), !!finished);
+      .updatePlayer(S.roomId, S.nick, myStateJSON(finalRet), !!finished);
   }
   function maybeSyncMulti() {
     if (S.tick % S.syncEvery === 0) syncMyState(false);
   }
 
-  // 멀티 순위: 각자 보유 상태 + 공유 시세로 전원 수익률 동일 계산
+  // 서버 명단 병합: 이미 finalRet(박제값)을 알고 있는 플레이어는 그 값을 유지.
+  // (종료한 플레이어가 결과화면에서 finished:true로 올린 state엔 finalRet이 들어있음.
+  //  아직 안 끝난 플레이어가 폴링으로 덮어쓸 때 박제값이 날아가지 않게 보존.)
+  function mergePlayers(ps) {
+    if (!ps) return S.players || [];
+    const prev = {};
+    (S.players || []).forEach((p) => {
+      prev[String(p.nick)] = p;
+    });
+    return ps.map((p) => {
+      const old = prev[String(p.nick)];
+      const oldFinal = old && old.state && old.state.finalRet;
+      if (oldFinal != null && (!p.state || p.state.finalRet == null)) {
+        p.state = p.state || {};
+        p.state.finalRet = oldFinal;
+      }
+      return p;
+    });
+  }
+
+  // 멀티 순위: 각자 보유 상태 + 공유 시세로 전원 수익률 동일 계산.
+  // reveal=false(게임 중)면 수익률 숨김 — 단, 청산된 본인 화면에서는 보여준다(요청사항).
   function renderRankMulti(reveal) {
     const byNick = {};
     (S.players || []).forEach((p) => {
       byNick[String(p.nick)] = {
         nick: String(p.nick),
-        ret: retFromState(p.state),
+        ret: rankRetOfState(p.state),
       };
     });
     const meKey = String(S.nick);
@@ -1736,6 +2209,9 @@
       .sort((a, b) => b.ret - a.ret);
     const ul = document.getElementById(reveal ? "r-rank-list" : "g-rank");
     ul.innerHTML = "";
+    // 게임 중에도 수익률을 보일지: reveal(종료) or 내가 청산됨 or 막판(durationMin별 임계치)
+    const showVal =
+      reveal || (S.me && S.me.liquidated) || secondsLeft() <= revealThreshold();
     list.forEach((p, i) => {
       const me = p.nick === meKey,
         r = p.ret;
@@ -1743,7 +2219,7 @@
       li.className = "rank-row" + (me ? " me" : "");
       li.innerHTML = `<span class="rank-no">${i + 1}</span>
       <span class="rank-name">${p.nick}</span>
-      <span class="rank-val ${r >= 0 ? "up" : "down"}" ${reveal ? "" : 'style="display:none"'}>${(r >= 0 ? "+" : "") + r.toFixed(2)}%</span>`;
+      <span class="rank-val ${r >= 0 ? "up" : "down"}" ${showVal ? "" : 'style="display:none"'}>${(r >= 0 ? "+" : "") + r.toFixed(2)}%</span>`;
       ul.appendChild(li);
     });
     return list;
@@ -1753,6 +2229,8 @@
     S.ended = true;
     const myRet = ret(S.me);
     show("result");
+    // 결과화면에서도 하트비트 유지: 내가 결과화면에 머무는 동안 유령 처리되지 않도록.
+    startResultHeartbeat();
     try {
       document.getElementById("r-email-note").textContent =
         "친구와의 실시간 대결 결과입니다.";
@@ -1761,7 +2239,7 @@
     const setupResult = (ps) => {
       if (done) return;
       done = true;
-      if (ps) S.players = ps;
+      if (ps) S.players = mergePlayers(ps);
       let myRank = 1;
       try {
         myRank = paintMulti(myRet);
@@ -1781,7 +2259,7 @@
         tries++;
         google.script.run
           .withSuccessHandler((p2) => {
-            if (p2) S.players = p2;
+            if (p2) S.players = mergePlayers(p2);
             try {
               paintMulti(myRet);
             } catch (e) {}
@@ -1797,12 +2275,27 @@
       setTimeout(poll, 1500);
     };
     if (window.google && google.script && google.script.run) {
+      // 종료 시점 내 최종 수익률(myRet)을 state에 박제해서 올린다 → 다른 사람 결과화면에서 내 값이 고정.
       google.script.run
         .withSuccessHandler(setupResult)
         .withFailureHandler(() => setupResult(S.players))
-        .updatePlayer(S.roomId, S.nick, myStateJSON(), true);
+        .updatePlayer(S.roomId, S.nick, myStateJSON(myRet), true);
       setTimeout(() => setupResult(S.players), 5000);
     } else setupResult(S.players);
+  }
+
+  // 결과화면 전용 하트비트 (대기실 hbTimer와 별개)
+  function startResultHeartbeat() {
+    stopResultHeartbeat();
+    if (!(MP && MP.roomId)) return;
+    heartbeat();
+    MP.resultHbTimer = setInterval(heartbeat, 7000);
+  }
+  function stopResultHeartbeat() {
+    if (MP && MP.resultHbTimer) {
+      clearInterval(MP.resultHbTimer);
+      MP.resultHbTimer = null;
+    }
   }
 
   function paintMulti(myRet) {
@@ -1838,7 +2331,7 @@
     const summary = buildLogSummary(myRank, total, myRet);
     const payload = {
       nickname: S.nick,
-      email: "",
+      email: S.email || "",
       mode: "multi",
       symbolLabel: CAT_LABEL[S.category],
       leverage: S.startLev || S.me.leverage,
@@ -1850,17 +2343,28 @@
       gameId: S.gameId,
       chartData: JSON.stringify({ ret: S.equitySeries || [], log: S.log }),
     };
+    // G: 거래내역 탭 채우기 + 결과 탭 초기화
+    const rTrade = document.getElementById("r-trade");
+    if (rTrade) rTrade.innerHTML = tradeTimelineHTML(S.log);
+    const rtabs = document.getElementById("r-tabs");
+    if (rtabs) {
+      rtabs
+        .querySelectorAll(".tab-btn")
+        .forEach((b, i) => b.classList.toggle("active", i === 0));
+      document
+        .getElementById("screen-result")
+        .querySelectorAll(".tab-panel")
+        .forEach((p, i) => {
+          p.style.display = i === 0 ? "" : "none";
+          p.classList.toggle("active", i === 0);
+        });
+    }
     if (window.google && google.script && google.script.run) {
       aiEl.className = "ai-feedback loading";
       aiEl.textContent = "AI가 거래를 분석하는 중";
       google.script.run
         .withSuccessHandler((fb) => {
-          aiEl.className = "ai-feedback";
-          aiEl.textContent = fb
-            ? fb
-            : "AI 분석을 불러오지 못했어요 (API 키/쿼터 확인). 거래 " +
-              S.log.length +
-              "건 기록됨.";
+          renderAIFeedback(aiEl, fb, S.log.length);
         })
         .withFailureHandler(() => {
           aiEl.className = "ai-feedback";
@@ -1882,13 +2386,15 @@
 
   // 테마 토글 + 시작 시 저장된 테마 적용
   (function () {
+    function toggleTheme() {
+      const dark =
+        document.documentElement.getAttribute("data-theme") === "dark";
+      applyTheme(dark ? "light" : "dark");
+    }
     const sw = document.getElementById("theme-switch");
-    if (sw)
-      sw.onclick = function () {
-        const dark =
-          document.documentElement.getAttribute("data-theme") === "dark";
-        applyTheme(dark ? "light" : "dark");
-      };
+    if (sw) sw.onclick = toggleTheme;
+    const sw2 = document.getElementById("lobby-theme-switch");
+    if (sw2) sw2.onclick = toggleTheme;
     let saved = "light";
     try {
       saved = localStorage.getItem("sb-theme") || "light";
@@ -1896,13 +2402,32 @@
     applyTheme(saved);
   })();
 
+  // 페이지 이탈 시 멀티 방에서 빠지기 (best-effort). 대기실·게임 중 모두 적용.
+  window.addEventListener("pagehide", function () {
+    try {
+      if (MP && MP.roomId && navigator.sendBeacon) {
+        // sendBeacon은 GAS로 직접 못 쏘니, google.script.run으로 best-effort 호출
+      }
+      if (
+        MP &&
+        MP.roomId &&
+        window.google &&
+        google.script &&
+        google.script.run
+      ) {
+        google.script.run.leaveRoom(MP.roomId, MP.nick);
+      }
+    } catch (e) {}
+  });
+
   // ---------- 유틸 ----------
   function show(name) {
     document
       .querySelectorAll(".screen")
       .forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + name).classList.add("active");
-    window.scrollTo(0, 0);
+    document.body.classList.toggle("in-game", name === "game");
+    if (name !== "game") window.scrollTo(0, 0);
   }
   function fmtTime(s) {
     s = Math.max(0, s);
