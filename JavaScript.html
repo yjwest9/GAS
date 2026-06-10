@@ -613,7 +613,7 @@
         t.liquidated = true;
         t.posIdx = -1;
         if (t === S.me) liquidationFX();
-        if (t === S.me && S.mode === "multi") syncMyState(false);
+        if (t === S.me && S.mode === "multi") syncMyState(false, ret(S.me));
       }
     });
     if (S.mode === "multi") {
@@ -1175,6 +1175,12 @@
     });
     charts = [null, null];
     if (S.mode === "multi" && MP && MP.roomId) {
+      if (MP.isHost && window.google && google.script && google.script.run) {
+        google.script.run
+          .withSuccessHandler(() => {})
+          .withFailureHandler(() => {})
+          .resetRoomToWaiting(MP.roomId);
+      }
       enterLobby(MP.roomId, MP.nick, MP.isHost, MP.inviteUrl);
       MP.lastStart = S.startTime || 0;
     } else show("setup");
@@ -1866,15 +1872,12 @@
     heartbeat();
     MP.hbTimer = setInterval(heartbeat, 7000);
   }
-  // 방장 여부에 따라 시작버튼/대기문구/설정버튼 표시 (위임으로 바뀔 수 있어 분리)
+  // 방장 여부에 따라 시작버튼/대기문구 표시 (위임으로 바뀔 수 있어 분리)
   function applyHostUI(isHost) {
     document.getElementById("btn-startroom").style.display = isHost
       ? ""
       : "none";
     document.getElementById("l-wait").style.display = isHost ? "none" : "";
-    document.getElementById("btn-lobby-settings").style.display = isHost
-      ? ""
-      : "none";
   }
   // 대기실/결과화면에서 내 생존 신호만 보냄 (state는 그대로, updatedAt만 갱신)
   function heartbeat() {
@@ -1963,89 +1966,6 @@
       google.script.run.leaveRoom(MP.roomId, MP.nick);
     }
     show("home");
-  };
-
-  // 대기실 조건 변경 모달
-  const lobbySettingsModal = document.getElementById("lobby-settings-modal");
-  const lsSetup = { category: "kr", leverage: 1, durationMin: 3 };
-
-  document.getElementById("btn-lobby-settings").onclick = () => {
-    // 현재 방 조건으로 모달 초기화
-    if (MP.room) {
-      lsSetup.category = MP.room.category || "kr";
-      lsSetup.leverage = MP.room.leverage || 1;
-      lsSetup.durationMin = MP.room.durationMin || 3;
-    }
-    // seg 버튼 active 동기화
-    ["ls-seg-category", "ls-seg-leverage", "ls-seg-duration"].forEach(
-      (segId) => {
-        const seg = document.getElementById(segId);
-        if (!seg) return;
-        const key =
-          segId === "ls-seg-category"
-            ? "category"
-            : segId === "ls-seg-leverage"
-              ? "leverage"
-              : "durationMin";
-        const attr =
-          segId === "ls-seg-category"
-            ? "cat"
-            : segId === "ls-seg-leverage"
-              ? "lev"
-              : "min";
-        seg.querySelectorAll(".seg-btn").forEach((btn) => {
-          const v = isNaN(+btn.dataset[attr])
-            ? btn.dataset[attr]
-            : +btn.dataset[attr];
-          btn.classList.toggle("active", v == lsSetup[key]);
-        });
-      },
-    );
-    lobbySettingsModal.classList.add("show");
-  };
-  document.getElementById("ls-close").onclick = () =>
-    lobbySettingsModal.classList.remove("show");
-  lobbySettingsModal.addEventListener("click", function (e) {
-    if (e.target === this) this.classList.remove("show");
-  });
-
-  bindSeg("ls-seg-category", "cat", "category", lsSetup);
-  bindSeg("ls-seg-leverage", "lev", "leverage", lsSetup);
-  bindSeg("ls-seg-duration", "min", "durationMin", lsSetup);
-
-  document.getElementById("btn-ls-apply").onclick = function () {
-    if (!(window.google && google.script && google.script.run)) return;
-    const btn = this;
-    btn.disabled = true;
-    btn.textContent = "적용 중...";
-    google.script.run
-      .withSuccessHandler((res) => {
-        btn.disabled = false;
-        btn.textContent = "적용";
-        if (res && res.error) {
-          alert("변경 실패: " + res.error);
-          return;
-        }
-        lobbySettingsModal.classList.remove("show");
-        // 카테고리 바뀌면 뉴스 재생성
-        if (!MP.room || MP.room.category !== lsSetup.category) {
-          const labels = INSTR[lsSetup.category].map((x) => x[1]);
-          google.script.run
-            .withSuccessHandler(() => {})
-            .withFailureHandler(() => {})
-            .prepareRoomNews(MP.roomId, lsSetup.category, labels);
-        }
-      })
-      .withFailureHandler(() => {
-        btn.disabled = false;
-        btn.textContent = "적용";
-        alert("변경 실패. 다시 시도해줘.");
-      })
-      .updateRoomSettings(MP.roomId, {
-        category: lsSetup.category,
-        leverage: lsSetup.leverage,
-        durationMin: lsSetup.durationMin,
-      });
   };
   document.getElementById("l-copy").onclick = async function () {
     const url = MP.inviteUrl || "";
@@ -2426,8 +2346,7 @@
       .querySelectorAll(".screen")
       .forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + name).classList.add("active");
-    document.body.classList.toggle("in-game", name === "game");
-    if (name !== "game") window.scrollTo(0, 0);
+    window.scrollTo(0, 0);
   }
   function fmtTime(s) {
     s = Math.max(0, s);

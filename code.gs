@@ -893,20 +893,19 @@ function aiMarketNews(category, items) {
   }
 }
 
-// 종료 시: 거래 기록 기반 피드백 (사실은 지어내지 않되, 해석·개선 조언은 적극적으로)
+// 종료 시: 거래 기록 기반 피드백 ([해석]·[조언]만, 사실 나열은 거래내역 탭에 있으므로 생략)
 function aiFeedback(summary, nickname) {
   var who = nickname || "플레이어";
   var prompt =
     "너는 트레이딩 코치다. 아래 한 판의 거래 기록과 결과를 근거로, 다음 판에 더 잘하도록 돕는 피드백을 써라.\n" +
     '맨 앞을 "' +
     who +
-    '님,"으로 시작하고, 한 문장으로 이번 판을 요약하라.\n\n' +
+    '님,"으로 시작하고, 이번 판을 한 문장으로 요약하라. 요약은 구체적으로: 어떤 종목으로 수익을 냈고 어떤 종목·결정으로 손실을 봤는지 사실 기반으로 써라.\n\n' +
     '★ 시간 표기 규칙(매우 중요): 기록의 [mm:ss]는 게임 시작 후 "경과 시간"이며 분:초 단위다. 예: [00:21]=21초, [01:35]=1분 35초. 절대 "00시 21분"처럼 시각(시/분)으로 바꿔 쓰지 마라. 그대로 [mm:ss]로 인용하라.\n\n' +
-    "아래 세 라벨을 반드시 이 순서로, 라벨 텍스트도 정확히 붙여서 써라:\n" +
-    '[사실] 거래내역에 실제로 적힌 행동을 시간순으로 나열한다. 각 행동을 "[mm:ss] 무엇을 했다" 한 줄씩, 줄바꿈으로 구분해 써라(한 줄에 몰아쓰지 마라). 기록에 없는 행동(손절·추가매수 등)이나 감정(당황·욕심)은 절대 지어내지 마라.\n' +
+    "아래 두 라벨을 반드시 이 순서로, 라벨 텍스트도 정확히 붙여서 써라:\n" +
     "[해석] 그 결정들이 결과(수익률·순위·청산)로 어떻게 이어졌는지, 가장 핵심 원인 1가지를 2~3문장으로 짚어라. 한 문단으로 쓰되 사실 나열 반복은 금지. 예: 뉴스 방향과 엇갈린 매매, 손실 구간 레버리지 상향, 종목 갈아타기 타이밍.\n" +
     '[조언] 다음 판에 바로 적용할 구체적 개선점 1가지를 2~3문장으로 제시하라. "힘내세요" 같은 추상적 격려 금지. 어떤 상황에서 어떤 행동을 하라는 식으로 행동 단위로 써라.\n\n' +
-    "전체 규칙: 존댓말 평문, 마크다운(*, #) 금지. [사실]만 여러 줄, [해석]·[조언]은 각각 한 문단.\n\n" +
+    "전체 규칙: 존댓말 평문, 마크다운(*, #) 금지. [해석]·[조언]은 각각 한 문단.\n\n" +
     summary;
   return callGemini_(prompt, false, 0.4);
 }
@@ -955,33 +954,6 @@ function createRoom(opts) {
     url = ScriptApp.getService().getUrl() + "?room=" + roomId;
   } catch (e) {}
   return { roomId: roomId, inviteUrl: url };
-}
-
-// 대기실에서 방장이 게임 조건 변경. status==='waiting'일 때만 허용.
-// 카테고리 변경 시 news를 {}로 초기화(클라가 prepareRoomNews 재호출).
-function updateRoomSettings(roomId, opts) {
-  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  var rooms = ss.getSheetByName("Rooms");
-  var vals = rooms.getDataRange().getValues();
-  var h = vals[0];
-  var ic = h.indexOf("roomId"),
-    sc = h.indexOf("status");
-  var cc = h.indexOf("category"),
-    lc = h.indexOf("leverage"),
-    dc = h.indexOf("durationMin"),
-    nc = h.indexOf("news");
-  for (var r = 1; r < vals.length; r++) {
-    if (String(vals[r][ic]) !== String(roomId)) continue;
-    if (String(vals[r][sc]) !== "waiting") return { error: "NOT_WAITING" };
-    var categoryChanged = String(vals[r][cc]) !== String(opts.category);
-    if (cc >= 0) rooms.getRange(r + 1, cc + 1).setValue(opts.category);
-    if (lc >= 0) rooms.getRange(r + 1, lc + 1).setValue(opts.leverage);
-    if (dc >= 0) rooms.getRange(r + 1, dc + 1).setValue(opts.durationMin);
-    if (categoryChanged && nc >= 0)
-      rooms.getRange(r + 1, nc + 1).setValue(JSON.stringify({}));
-    return { ok: true };
-  }
-  return { error: "NOT_FOUND" };
 }
 
 // 방 생성 직후 클라가 비동기로 호출 → Rooms.news 컬럼에 AI 헤드라인 채움.
@@ -1154,6 +1126,25 @@ function resetRoomPlayers_(ss, roomId) {
     if (String(vals[r][0]) === String(roomId))
       players.getRange(r + 1, 3, 1, 3).setValues([["", false, new Date()]]);
   }
+}
+
+// 게임 종료 후 대기실로 돌아올 때 방을 waiting 상태로 복귀 (방장만 호출)
+function resetRoomToWaiting(roomId) {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var rooms = ss.getSheetByName("Rooms");
+  var vals = rooms.getDataRange().getValues();
+  var h = vals[0];
+  var ic = h.indexOf("roomId"),
+    sc = h.indexOf("status"),
+    tc = h.indexOf("startTime");
+  for (var r = 1; r < vals.length; r++) {
+    if (String(vals[r][ic]) === String(roomId)) {
+      rooms.getRange(r + 1, sc + 1).setValue("waiting");
+      if (tc >= 0) rooms.getRange(r + 1, tc + 1).setValue("");
+      return { ok: true };
+    }
+  }
+  return { error: "NOT_FOUND" };
 }
 
 // 내 포지션 상태 갱신 + 전체 명단 반환
